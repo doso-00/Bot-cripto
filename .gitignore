@@ -4,14 +4,14 @@
 !.env.example
 
 # Dati, report e log generati (non versionati, vedi brief §3.2)
-data/
-reports/
-logs/
+/data/
+/reports/
+/logs/
 *.duckdb
 *.duckdb.wal
 
 # Kill switch manuale: file locale, non va mai committato
-STOP
+/STOP
 
 # Python
 __pycache__/

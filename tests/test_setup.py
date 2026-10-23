@@ -1,5 +1,6 @@
 """Test di Fase 0: verificano che lo scheletro del progetto sia coerente col brief."""
 
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -15,7 +16,7 @@ def test_package_importable():
 
 def test_gitignore_excludes_secrets_and_generated_files():
     lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
-    for entry in [".env", "data/", "reports/", "logs/", "STOP"]:
+    for entry in [".env", "/data/", "/reports/", "/logs/", "/STOP"]:
         assert entry in lines, f"{entry} manca da .gitignore"
 
 
@@ -45,3 +46,12 @@ def test_settings_yaml_has_brief_defaults():
 def test_live_limits_not_present_yet():
     # config/live_limits.yaml si crea solo in Fase 5 (CLAUDE.md, regola 3)
     assert not (ROOT / "config" / "live_limits.yaml").exists()
+
+
+def test_source_code_is_not_gitignored():
+    # Un pattern come "data/" senza "/" iniziale escluderebbe anche bot/data/
+    result = subprocess.run(
+        ["git", "check-ignore", "bot/data/db.py", "bot/data/quality.py"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.stdout == "", f"file sorgente ignorati da git: {result.stdout}"
