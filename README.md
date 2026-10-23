@@ -6,7 +6,7 @@ Bot di trading **spot** su Binance, progetto didattico/sperimentale. L'obiettivo
 - Specifica completa e fasi: [`docs/BRIEF_PROGETTO.md`](docs/BRIEF_PROGETTO.md)
 - Registro delle decisioni: [`docs/DECISIONI.md`](docs/DECISIONI.md)
 
-**Stato:** Fase 0 (setup) completata. Nessuna funzionalità di trading è ancora implementata.
+**Stato:** Fase 1 (dati): codice completo e testato; il download reale e la chiusura della fase si fanno sulla macchina dell'utente. Nessuna funzionalità di trading è ancora implementata.
 
 ## Installazione
 
@@ -37,11 +37,24 @@ Kill switch: creare un file `STOP` nella root del progetto ferma il bot al ciclo
 | Comando | Cosa fa | Disponibile da |
 |---|---|---|
 | `uv run pytest` | Esegue la suite di test | Fase 0 |
-| `uv run python -m bot.data.download` | Scarica/aggiorna le candele storiche | Fase 1 |
+| `uv run python -m bot.data.download` | Scarica/aggiorna le candele storiche e i filtri dell'exchange | Fase 1 |
+| `uv run python -m bot.data.quality` | Report di qualità dei dati in `reports/` | Fase 1 |
 | `uv run python -m bot.backtest --strategy sma_cross` | Esegue un backtest | Fase 2 |
 | `uv run python -m bot.report` | Genera il report delle performance | Fase 2 |
 | `uv run python -m bot.optimize --strategy sma_cross` | Ottimizzazione walk-forward | Fase 3 |
 | `uv run python -m bot.run --mode paper` | Avvia il paper trading sul Testnet | Fase 4 |
+
+## Dati (Fase 1)
+
+```bash
+uv run python -m bot.data.download   # prima volta: qualche minuto; poi solo le candele nuove
+uv run python -m bot.data.quality    # report in reports/data_quality_*.md
+```
+
+- Fonti: archivio mensile `data.binance.vision` (mesi conclusi, checksum verificato) e endpoint pubblico klines di Binance (il resto). Nessuna chiave API.
+- Database: `data/market.duckdb`, tabelle `candles` ed `exchange_filters`. Orari sempre in UTC.
+- Query di verifica in SQL: [`docs/QUERY_VERIFICA.md`](docs/QUERY_VERIFICA.md).
+- Buchi nei dati: vanno spiegati in `config/known_gaps.yaml`, altrimenti il report è NON OK.
 
 ## Struttura
 

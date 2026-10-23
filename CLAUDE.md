@@ -35,7 +35,8 @@ Questo file contiene le regole permanenti del progetto. Il documento di specific
 
 | Comando | Cosa fa |
 |---|---|
-| `uv run python -m bot.data.download` | Scarica/aggiorna le candele storiche |
+| `uv run python -m bot.data.download` | Scarica/aggiorna le candele storiche e i filtri dell'exchange |
+| `uv run python -m bot.data.quality` | Report di qualità dei dati (exit code 1 se ci sono errori o buchi non spiegati) |
 | `uv run python -m bot.backtest --strategy sma_cross` | Esegue un backtest |
 | `uv run python -m bot.optimize --strategy sma_cross` | Ottimizzazione walk-forward dei parametri |
 | `uv run python -m bot.run --mode paper` | Avvia il paper trading sul Testnet |

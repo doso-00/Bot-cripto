@@ -16,8 +16,21 @@ validation_end: "2024-12-31"
 
 min_rebalance_delta: 0.1
 
+# Soglie del controllo qualità dati (brief §4.4). Vedi docs/DECISIONI.md per la motivazione.
+data_quality:
+  # Variazione close-to-close oltre la quale una candela è segnalata come "salto anomalo"
+  max_abs_return:
+    1h: 0.15
+    4h: 0.20
+  # Differenza tra open e close della candela precedente oltre la quale si segnala un "gap"
+  # (su un mercato 24/7 open e close precedente dovrebbero quasi coincidere)
+  max_open_gap: 0.02
+  # Tolleranza relativa nel confronto tra candele 4h scaricate e 4h ricostruite dalle 1h
+  resample_tolerance: 0.000001
+
 paths:
   raw_data: data/raw
   database: data/market.duckdb
   reports: reports
   logs: logs
+  known_gaps: config/known_gaps.yaml
