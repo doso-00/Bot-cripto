@@ -1,0 +1,10 @@
+# Limiti di rischio per la modalità paper (brief §7).
+# Le percentuali sono frazioni del capitale del bot (budget dedicato, non il saldo totale del conto).
+max_exposure_per_symbol: 1.0
+max_order_fraction: 0.25
+max_daily_loss: 0.03          # raggiunta: niente nuovi acquisti fino a mezzanotte UTC
+max_drawdown: 0.15            # raggiunto: chiude le posizioni e si ferma (riavvio manuale)
+max_orders_per_hour: 6
+max_stale_intervals: 2        # ultima candela chiusa più vecchia di N intervalli: nessun ordine
+max_price_divergence: 0.005   # prezzo stimato vs ultimo close
+kill_switch_file: STOP

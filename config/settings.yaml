@@ -1,0 +1,23 @@
+# Parametri generali (brief §11). Valori di default, versionati.
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+timeframe: 1h
+comparison_timeframe: 4h
+history_start: "2020-01-01"
+
+initial_capital_usdt: 1000
+fee_rate: 0.001          # 0,1% per lato: verificare il proprio livello commissioni sul conto
+slippage_rate: 0.0005    # 0,05% per lato
+
+# Split temporale fisso (brief §6.2): il test parte dal giorno dopo validation_end
+train_end: "2023-12-31"
+validation_end: "2024-12-31"
+
+min_rebalance_delta: 0.1
+
+paths:
+  raw_data: data/raw
+  database: data/market.duckdb
+  reports: reports
+  logs: logs

@@ -1,0 +1,3 @@
+# Parametri di partenza per sma_cross (brief §5). Verranno ottimizzati solo sul training (Fase 3).
+fast: 20
+slow: 50

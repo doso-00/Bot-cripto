@@ -1,0 +1,28 @@
+# Segreti: mai versionare
+.env
+.env.*
+!.env.example
+
+# Dati, report e log generati (non versionati, vedi brief §3.2)
+data/
+reports/
+logs/
+*.duckdb
+*.duckdb.wal
+
+# Kill switch manuale: file locale, non va mai committato
+STOP
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
