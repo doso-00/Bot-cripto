@@ -6,7 +6,7 @@ Bot di trading **spot** su Binance, progetto didattico/sperimentale. L'obiettivo
 - Specifica completa e fasi: [`docs/BRIEF_PROGETTO.md`](docs/BRIEF_PROGETTO.md)
 - Registro delle decisioni: [`docs/DECISIONI.md`](docs/DECISIONI.md)
 
-**Stato:** Fase 1 (dati) chiusa il 2026-10-24 (report di qualità OK sui dati reali, 2020-01-01 → 2026-10-24). In corso: Fase 2 (motore di backtest e benchmark).
+**Stato:** Fase 1 (dati) e Fase 2 (motore di backtest e benchmark) chiuse il 2026-10-24. Prossima: Fase 3 (strategie, ottimizzazione e validazione), in attesa della decisione sulla regola di drawdown massimo in backtest.
 
 ## Installazione
 
