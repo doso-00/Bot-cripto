@@ -54,7 +54,7 @@ uv run python -m bot.data.quality    # report in reports/data_quality_*.md
 - Fonti: archivio mensile `data.binance.vision` (mesi conclusi, checksum verificato) e endpoint pubblico klines di Binance (il resto). Nessuna chiave API.
 - Database: `data/market.duckdb`, tabelle `candles` ed `exchange_filters`. Orari sempre in UTC.
 - Query di verifica in SQL: [`docs/QUERY_VERIFICA.md`](docs/QUERY_VERIFICA.md).
-- Buchi nei dati: vanno spiegati in `config/known_gaps.yaml`, altrimenti il report è NON OK.
+- Buchi e anomalie nei dati: vanno spiegati da un evento in `config/known_events.yaml` (es. un fermo di Binance), altrimenti il report è NON OK.
 
 ## Struttura
 

@@ -1,0 +1,104 @@
+# Eventi noti che spiegano buchi e anomalie nei dati (brief §9, Fase 1: "nessun buco non spiegato").
+#
+# Ogni voce è un intervallo di tempo UTC [start, end) in cui l'exchange era fermo o i dati sono
+# anomali per una causa nota. Il controllo qualità considera "spiegati":
+# - i buchi interamente contenuti nell'intervallo;
+# - le candele interamente contenute nell'intervallo con close_time anomalo o volume zero
+#   (l'ultima candela prima di un fermo si chiude in anticipo, quando il trading si interrompe).
+# Per i timeframe più lunghi l'intervallo si allarga ai confini delle candele: un fermo dalle
+# 11:00 alle 17:00 tocca le candele 4h delle 08:00, 12:00 e 16:00.
+#
+# Come sono state compilate le voci attuali (2026-10-24, dal report di qualità):
+# - start = un'ora prima della prima candela mancante (include la candela che si chiude in
+#   anticipo all'inizio del fermo); end = fine dell'ultima candela mancante;
+# - "misurato": il buco è identico su tutti i simboli e timeframe scaricati, quindi è un fermo
+#   dell'exchange e non un problema di download;
+# - "source": presente solo dove la causa è confermata da una fonte esterna. Le altre restano
+#   fermi misurati con causa non verificata (molti iniziano alle 02:00 UTC, orario tipico delle
+#   manutenzioni programmate di Binance: è un'ipotesi, non un dato).
+#
+# Formato di una voce:
+# - symbol: "*"                    # oppure BTC/USDT
+#   timeframe: "*"                 # oppure 1h / 4h
+#   start: "2020-01-01T00:00:00"   # inizio (UTC, incluso)
+#   end: "2020-01-01T02:00:00"     # fine (UTC, escluso)
+#   reason: "..."
+#   source: "https://..."          # facoltativo
+known_events:
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-02-09T01:00:00"
+    end: "2020-02-09T03:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 1 candele 1h mancanti dalle 02:00 alle 02:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-02-19T11:00:00"
+    end: "2020-02-19T17:00:00"
+    reason: "Fermo non programmato di Binance (problema a un market data pusher, dichiarato dal CEO); misurato: 5 candele 1h mancanti dalle 12:00 alle 16:00 UTC, identiche su BTC/USDT ed ETH/USDT"
+    source: "https://www.theblock.co/news/markets/2020-02-19-binance-pauses-trading-due-to-unscheduled-system-maintenance-56359"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-03-04T09:00:00"
+    end: "2020-03-04T11:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 1 candele 1h mancanti dalle 10:00 alle 10:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-04-25T01:00:00"
+    end: "2020-04-25T04:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 2 candele 1h mancanti dalle 02:00 alle 03:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-06-28T01:00:00"
+    end: "2020-06-28T05:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 3 candele 1h mancanti dalle 02:00 alle 04:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-11-30T05:00:00"
+    end: "2020-11-30T07:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 1 candele 1h mancanti dalle 06:00 alle 06:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-12-21T14:00:00"
+    end: "2020-12-21T18:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 3 candele 1h mancanti dalle 15:00 alle 17:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2020-12-25T01:00:00"
+    end: "2020-12-25T03:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 1 candele 1h mancanti dalle 02:00 alle 02:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2021-02-11T03:00:00"
+    end: "2021-02-11T05:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 1 candele 1h mancanti dalle 04:00 alle 04:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2021-03-06T01:00:00"
+    end: "2021-03-06T03:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 1 candele 1h mancanti dalle 02:00 alle 02:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2021-04-20T01:00:00"
+    end: "2021-04-20T04:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 2 candele 1h mancanti dalle 02:00 alle 03:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2021-04-25T04:00:00"
+    end: "2021-04-25T08:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 3 candele 1h mancanti dalle 05:00 alle 07:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2021-08-13T01:00:00"
+    end: "2021-08-13T06:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 4 candele 1h mancanti dalle 02:00 alle 05:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2021-09-29T06:00:00"
+    end: "2021-09-29T09:00:00"
+    reason: "Fermo di tutto l'exchange (misurato: 2 candele 1h mancanti dalle 07:00 alle 08:00 UTC, identiche su BTC/USDT ed ETH/USDT); causa specifica non verificata con fonte esterna"
+  - symbol: "*"
+    timeframe: "*"
+    start: "2023-03-24T12:00:00"
+    end: "2023-03-24T14:00:00"
+    reason: "Sospensione del trading spot di Binance per un bug del matching engine sugli ordini trailing stop; misurato: 1 candele 1h mancanti dalle 13:00 alle 13:00 UTC, identiche su BTC/USDT ed ETH/USDT"
+    source: "https://techcrunch.com/2023/03/24/crypto-giant-binance-temporarily-suspends-spot-trading"

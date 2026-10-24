@@ -33,4 +33,4 @@ paths:
   database: data/market.duckdb
   reports: reports
   logs: logs
-  known_gaps: config/known_gaps.yaml
+  known_events: config/known_events.yaml

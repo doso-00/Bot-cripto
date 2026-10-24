@@ -61,7 +61,7 @@ WHERE next_open - open_time > step
 ORDER BY first_missing, symbol, timeframe;
 ```
 
-Ogni riga deve avere una spiegazione in `config/known_gaps.yaml`.
+Ogni riga deve essere contenuta in un evento di `config/known_events.yaml`.
 Se lo stesso buco compare per tutti i simboli, è con ogni probabilità un fermo dell'exchange.
 
 ## Q4 — Coerenza OHLC e valori
@@ -92,7 +92,8 @@ WHERE epoch(c.open_time) % tf.step_s <> 0
    OR c.close_time <> c.open_time + tf.step - INTERVAL 1 MILLISECOND;
 ```
 
-Deve restituire zero righe.
+Le uniche righe ammesse sono le candele che toccano un fermo dell'exchange (si chiudono in anticipo
+quando il trading si interrompe) e sono contenute in un evento di `config/known_events.yaml`.
 
 ## Q6 — Candele 4h confrontate con la ricostruzione dalle 1h
 
@@ -122,8 +123,9 @@ WHERE h4.timeframe = '4h'
        OR abs(h4.volume - h1.volume) > 1e-6 * h4.volume);
 ```
 
-Deve restituire zero righe. I blocchi con meno di 4 candele 1h (per un buco) sono esclusi:
-non si possono ricostruire.
+I prezzi devono coincidere sempre. Il volume può differire su poche candele: è un'incoerenza
+dell'archivio Binance (vedi `docs/DECISIONI.md`), segnalata come avviso. I blocchi con meno di 4
+candele 1h (per un buco) sono esclusi: non si possono ricostruire.
 
 ## Q7 — Le 10 variazioni orarie più ampie (da verificare a mano sui grafici)
 

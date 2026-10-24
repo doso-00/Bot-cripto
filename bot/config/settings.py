@@ -25,7 +25,7 @@ class PathSettings(BaseModel):
     database: Path
     reports: Path
     logs: Path
-    known_gaps: Path
+    known_events: Path
 
     def resolve(self, root: Path) -> "PathSettings":
         """Restituisce una copia con i percorsi relativi risolti rispetto a `root`."""

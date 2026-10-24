@@ -5,7 +5,18 @@ import yaml
 
 from bot.data.db import upsert_candles
 from bot.data.klines import klines_to_frame
-from bot.data.quality import ERROR, WARNING, check_candles, check_resample, explain_gaps, run_quality
+from bot.config import PROJECT_ROOT
+from bot.data.quality import (
+    ERROR,
+    EXPLAINED,
+    WARNING,
+    KnownEvent,
+    check_candles,
+    check_resample,
+    load_known_events,
+    mark_common_gaps,
+    run_quality,
+)
 from tests.conftest import aggregate_rows, candles, raw_klines
 
 START = datetime(2020, 1, 1)
@@ -84,33 +95,95 @@ def test_resample_matches_when_coarse_is_aggregate_of_fine():
     fine = klines_to_frame(rows, "BTC/USDT", "1h", "test")
     coarse = klines_to_frame(aggregate_rows(rows, 4, "4h"), "BTC/USDT", "4h", "test")
     issues, note = check_resample(fine, coarse, "BTC/USDT", "1h", "4h", 1e-6)
-    assert issues == [] and "24 candele confrontate, 0 diverse, 0 non confrontabili" in note
+    assert issues == []
+    assert "24 candele confrontate, 0 con prezzi diversi, 0 solo con volume diverso, 0 non confrontabili" in note
 
 
-def test_resample_detects_mismatch_and_skips_incomplete_blocks():
+def test_resample_price_mismatch_is_error_and_incomplete_blocks_are_skipped():
     rows = raw_klines(START, 96, "1h")
     fine = klines_to_frame(rows, "BTC/USDT", "1h", "test").drop(index=[5])  # blocco 04:00 incompleto
     coarse = klines_to_frame(aggregate_rows(rows, 4, "4h"), "BTC/USDT", "4h", "test")
     coarse.loc[10, "close"] *= 1.001
     issues, note = check_resample(fine, coarse, "BTC/USDT", "1h", "4h", 1e-6)
-    assert issues[0].severity == ERROR and issues[0].count == 1
-    assert "23 candele confrontate, 1 diverse, 1 non confrontabili" in note
+    assert [(i.severity, i.count) for i in issues] == [(ERROR, 1)]
+    assert "23 candele confrontate, 1 con prezzi diversi, 0 solo con volume diverso, 1 non confrontabili" in note
 
 
-def test_gap_explanations_and_common_gap_hint():
+def test_resample_volume_only_mismatch_is_warning():
+    # Caso reale (BTC/USDT 4h 2021-01-21 08:00): prezzi identici, volume 4h diverso dalla somma 1h
+    rows = raw_klines(START, 96, "1h")
+    fine = klines_to_frame(rows, "BTC/USDT", "1h", "test")
+    coarse = klines_to_frame(aggregate_rows(rows, 4, "4h"), "BTC/USDT", "4h", "test")
+    coarse.loc[2, "volume"] *= 0.9
+    issues, _ = check_resample(fine, coarse, "BTC/USDT", "1h", "4h", 1e-6)
+    assert [(i.severity, i.count) for i in issues] == [(WARNING, 1)]
+
+
+def outage_series(timeframe_rows, first_missing, n_missing, truncated_at):
+    """Serie con un fermo come quello reale del 2020-02-19: la candela prima del fermo si
+    chiude in anticipo (close_time a metà candela) e le successive mancano."""
+    df = klines_to_frame(timeframe_rows, "BTC/USDT", "1h", "test")
+    before = df.index[df["open_time"] == first_missing - pd.Timedelta(hours=1)][0]
+    df.loc[before, "close_time"] = truncated_at
+    return df.drop(index=range(before + 1, before + 1 + n_missing))
+
+
+EVENT = KnownEvent("*", "*", datetime(2020, 1, 2, 11), datetime(2020, 1, 2, 17), "fermo di prova")
+
+
+def test_known_event_explains_gap_and_truncated_candle():
+    df = outage_series(raw_klines(START, 72, "1h"), pd.Timestamp("2020-01-02 12:00"), 5, pd.Timestamp("2020-01-02 11:35:32"))
+
+    found, gaps = checks(df)
+    assert "close_time diverso da open_time + intervallo - 1 ms" in found
+    assert gaps[0].explanation is None
+
+    issues, gaps = check_candles(df, "BTC/USDT", "1h", date(2020, 1, 1), 0.15, 0.02, [EVENT])
+    assert {i.check: i.severity for i in issues} == {"close_time anomalo durante un evento noto": EXPLAINED}
+    assert [(g.n_missing, g.explanation) for g in gaps] == [(5, "fermo di prova")]
+
+
+def test_known_event_widens_to_coarse_candle_boundaries():
+    # Il fermo 11:00-17:00 tocca le candele 4h delle 08:00 (troncata) e delle 12:00 (mancante)
+    df = klines_to_frame(raw_klines(START, 18, "4h"), "BTC/USDT", "4h", "test")
+    df.loc[8, "close_time"] = pd.Timestamp("2020-01-02 11:35:32")
+    df = df.drop(index=[9])
+    issues, gaps = check_candles(df, "BTC/USDT", "4h", date(2020, 1, 1), 0.2, 0.02, [EVENT])
+    assert [i.severity for i in issues] == [EXPLAINED]
+    assert gaps[0].explanation == "fermo di prova"
+
+
+def test_event_does_not_explain_what_is_outside_it():
+    df = outage_series(raw_klines(START, 72, "1h"), pd.Timestamp("2020-01-02 12:00"), 7, pd.Timestamp("2020-01-02 11:35:32"))
+    _, gaps = check_candles(df, "BTC/USDT", "1h", None, 0.15, 0.02, [EVENT])
+    assert gaps[0].explanation is None  # il buco dura fino alle 19:00, oltre la fine dell'evento
+    eth_event = KnownEvent("ETH/USDT", "*", EVENT.start, EVENT.end, "solo ETH")
+    _, gaps = check_candles(df, "BTC/USDT", "1h", None, 0.15, 0.02, [eth_event])
+    assert gaps[0].explanation is None
+
+
+def test_zero_volume_inside_event_is_explained_outside_is_warning():
+    df = candles(START, 72)
+    df.loc[[35, 50], "volume"] = 0  # 2020-01-02 11:00 (nell'evento) e 2020-01-03 02:00 (fuori)
+    issues, _ = check_candles(df, "BTC/USDT", "1h", None, 0.15, 0.02, [EVENT])
+    assert {i.check: (i.severity, i.count) for i in issues} == {
+        "candela a volume zero": (WARNING, 1),
+        "candela a volume zero durante un evento noto": (EXPLAINED, 1),
+    }
+
+
+def test_common_gap_hint():
     _, btc = checks(candles(START, 48).drop(index=[10, 11]))
-    eth_issues, eth = check_candles(
-        candles(START, 48, symbol="ETH/USDT").drop(index=[10, 11]), "ETH/USDT", "1h", None, 0.15, 0.02
-    )
-    gaps = btc + eth
-    known = [{"symbol": "*", "timeframe": "1h", "start": datetime(2020, 1, 1, 10),
-              "end": datetime(2020, 1, 1, 11), "reason": "manutenzione"}]
-    explain_gaps(gaps, known, ["BTC/USDT", "ETH/USDT"])
-    assert all(g.explanation == "manutenzione" and g.common_to_all_symbols for g in gaps)
-
+    _, eth = check_candles(candles(START, 48, symbol="ETH/USDT").drop(index=[10, 11]), "ETH/USDT", "1h", None, 0.15, 0.02)
     _, only_btc = checks(candles(START, 48).drop(index=[30]))
-    explain_gaps(only_btc, known, ["BTC/USDT", "ETH/USDT"])
-    assert only_btc[0].explanation is None and not only_btc[0].common_to_all_symbols
+    gaps = btc + eth + only_btc
+    mark_common_gaps(gaps, ["BTC/USDT", "ETH/USDT"])
+    assert [g.common_to_all_symbols for g in gaps] == [True, True, False]
+
+
+def test_project_known_events_file_is_valid():
+    events = load_known_events(PROJECT_ROOT / "config" / "known_events.yaml")
+    assert events and all(e.start < e.end for e in events)
 
 
 def test_run_quality_end_to_end(con, settings):
@@ -122,9 +195,9 @@ def test_run_quality_end_to_end(con, settings):
     report = run_quality(con, settings, symbols=["BTC/USDT"], now=now)
     assert not report.ok and len(report.unexplained_gaps) == 1 and report.errors == []
 
-    settings.paths.known_gaps.parent.mkdir(parents=True, exist_ok=True)
-    settings.paths.known_gaps.write_text(yaml.safe_dump({"known_gaps": [
+    settings.paths.known_events.parent.mkdir(parents=True, exist_ok=True)
+    settings.paths.known_events.write_text(yaml.safe_dump({"known_events": [
         {"symbol": "BTC/USDT", "timeframe": "1h", "start": "2020-01-02T16:00:00",
-         "end": "2020-01-02T16:00:00", "reason": "test"}
+         "end": "2020-01-02T17:00:00", "reason": "test"}
     ]}))
     assert run_quality(con, settings, symbols=["BTC/USDT"], now=now).ok
