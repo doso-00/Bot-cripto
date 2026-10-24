@@ -45,6 +45,77 @@ CREATE TABLE IF NOT EXISTS exchange_filters (
     raw_json            VARCHAR       NOT NULL,
     PRIMARY KEY (symbol, valid_from)
 );
+
+-- Ogni esecuzione (backtest, paper, live) è riproducibile: parametri, hash di configurazione, commit
+CREATE TABLE IF NOT EXISTS runs (
+    run_id        VARCHAR   PRIMARY KEY,
+    mode          VARCHAR   NOT NULL,
+    strategy      VARCHAR   NOT NULL,
+    symbol        VARCHAR   NOT NULL,
+    timeframe     VARCHAR   NOT NULL,
+    period_name   VARCHAR,
+    period_start  TIMESTAMP,
+    period_end    TIMESTAMP,
+    params_json   VARCHAR   NOT NULL,
+    risk_enabled  BOOLEAN   NOT NULL,
+    config_hash   VARCHAR   NOT NULL,
+    git_commit    VARCHAR,
+    started_at    TIMESTAMP NOT NULL,
+    ended_at      TIMESTAMP,
+    final_equity  DOUBLE,
+    metrics_json  VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS bt_trades (
+    run_id        VARCHAR   NOT NULL,
+    trade_id      INTEGER   NOT NULL,
+    entry_time    TIMESTAMP NOT NULL,
+    exit_time     TIMESTAMP NOT NULL,
+    entry_price   DOUBLE    NOT NULL,
+    exit_price    DOUBLE    NOT NULL,
+    qty           DOUBLE    NOT NULL,
+    gross_pnl     DOUBLE    NOT NULL,
+    fees          DOUBLE    NOT NULL,
+    slippage_cost DOUBLE    NOT NULL,
+    net_pnl       DOUBLE    NOT NULL,
+    return_pct    DOUBLE    NOT NULL,
+    exit_reason   VARCHAR   NOT NULL,
+    PRIMARY KEY (run_id, trade_id)
+);
+
+-- Una riga per candela: equity valutata al close e target deciso a quel close
+CREATE TABLE IF NOT EXISTS bt_equity (
+    run_id          VARCHAR   NOT NULL,
+    ts              TIMESTAMP NOT NULL,
+    cash_usdt       DOUBLE    NOT NULL,
+    position_qty    DOUBLE    NOT NULL,
+    position_value  DOUBLE    NOT NULL,
+    equity          DOUBLE    NOT NULL,
+    drawdown        DOUBLE    NOT NULL,
+    target_exposure DOUBLE    NOT NULL,
+    PRIMARY KEY (run_id, ts)
+);
+
+-- Ordini simulati, compresi quelli rifiutati (filtri exchange o risk manager) con il motivo
+CREATE TABLE IF NOT EXISTS bt_orders (
+    run_id      VARCHAR   NOT NULL,
+    ts          TIMESTAMP NOT NULL,
+    side        VARCHAR   NOT NULL,
+    qty         DOUBLE,
+    price_ref   DOUBLE,
+    price_exec  DOUBLE,
+    fee         DOUBLE,
+    status      VARCHAR   NOT NULL,
+    reason      VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS bt_risk_events (
+    run_id       VARCHAR   NOT NULL,
+    ts           TIMESTAMP NOT NULL,
+    rule         VARCHAR   NOT NULL,
+    detail       VARCHAR   NOT NULL,
+    action_taken VARCHAR   NOT NULL
+);
 """
 
 _VALUE_COLUMNS = ["open", "high", "low", "close", "volume", "close_time", "quote_volume", "trade_count"]

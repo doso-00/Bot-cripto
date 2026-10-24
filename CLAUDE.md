@@ -37,8 +37,8 @@ Questo file contiene le regole permanenti del progetto. Il documento di specific
 |---|---|
 | `uv run python -m bot.data.download` | Scarica/aggiorna le candele storiche e i filtri dell'exchange |
 | `uv run python -m bot.data.quality` | Report di qualità dei dati (exit code 1 se ci sono errori o buchi non spiegati) |
-| `uv run python -m bot.backtest --strategy sma_cross` | Esegue un backtest |
+| `uv run python -m bot.backtest --strategy sma_cross` | Esegue un backtest (default: periodo di training) e scrive il report HTML in `reports/` |
 | `uv run python -m bot.optimize --strategy sma_cross` | Ottimizzazione walk-forward dei parametri |
 | `uv run python -m bot.run --mode paper` | Avvia il paper trading sul Testnet |
-| `uv run python -m bot.report` | Genera il report delle performance |
+| `uv run python -m bot.report` | Report delle performance del paper trading (Fase 4); i report di backtest li genera `bot.backtest` |
 | `uv run pytest` | Esegue la suite di test |

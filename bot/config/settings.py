@@ -18,6 +18,13 @@ class DataQualitySettings(BaseModel):
     resample_tolerance: float = Field(ge=0)
 
 
+class RegimeSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lookback_days: int = Field(gt=0)
+    threshold: float = Field(gt=0, lt=1)
+
+
 class PathSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -50,6 +57,7 @@ class Settings(BaseModel):
     validation_end: date
     min_rebalance_delta: float = Field(ge=0, le=1)
     data_quality: DataQualitySettings
+    regimes: RegimeSettings
     paths: PathSettings
 
     @field_validator("symbols")

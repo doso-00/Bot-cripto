@@ -15,7 +15,8 @@ from pathlib import Path
 BOT_DIR = Path(__file__).resolve().parent.parent / "bot"
 
 FORBIDDEN = re.compile(
-    r"withdraw|transfer|sapi|margin|borrow|repay|futures|fapi|dapi|leverage|staking|_convert|convert_",
+    # "margin" da solo darebbe falsi positivi sul CSS: i metodi ccxt di margin contengono _margin o margin_
+    r"withdraw|transfer|sapi|_margin|margin_|borrow|repay|futures|fapi|dapi|leverage|staking|_convert|convert_",
     re.IGNORECASE,
 )
 
@@ -53,3 +54,8 @@ def test_no_withdraw_or_transfer_calls_in_bot_code():
 def test_scanner_catches_calls_and_ignores_comments():
     source = '"""Mai chiamare withdraw."""\n# niente transfer\nx = 1\nex.withdraw("BTC", 1)\ngetattr(ex, "sapi_post_x")\n'
     assert [n for n, _ in find_forbidden(source)] == [4, 5]
+
+
+def test_scanner_flags_margin_methods_but_not_css():
+    source = 'css = "body { margin:0 }"\nlayout = dict(margin={"l": 0})\nex.borrow_margin("USDT", 1)\nex.set_margin_mode("cross")\n'
+    assert [n for n, _ in find_forbidden(source)] == [3, 4]

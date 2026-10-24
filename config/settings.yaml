@@ -28,6 +28,12 @@ data_quality:
   # Tolleranza relativa nel confronto tra candele 4h scaricate e 4h ricostruite dalle 1h
   resample_tolerance: 0.000001
 
+# Regimi di mercato per l'analisi dei risultati (definizione fissata il 2026-10-23, vedi
+# docs/DECISIONI.md): rendimento delle ultime lookback_days giornate oltre ±threshold
+regimes:
+  lookback_days: 90
+  threshold: 0.15
+
 paths:
   raw_data: data/raw
   database: data/market.duckdb
