@@ -29,3 +29,9 @@ def test_all_four_criteria():
 
     eth_fails = phase3_criteria(m(0.5), m(0.4), m(0.45), m(0.1), m(0.4, dd=0.3), m(0.05), "ETH/USDT")
     assert not eth_fails[3].passed and "ETH/USDT" in eth_fails[3].name
+
+
+def test_detail_does_not_round_a_failure_into_a_pass():
+    # Caso reale (donchian su ETH, validazione 2024): riduzione del 29,97%, sotto la soglia
+    ok, detail = beats_benchmark(m(0.4067, dd=0.3270), m(0.4496, dd=0.4670))
+    assert not ok and "29.98%" in detail and "serve almeno il 30%" in detail

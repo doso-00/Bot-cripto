@@ -33,9 +33,10 @@ def beats_benchmark(metrics: dict, benchmark: dict) -> tuple[bool, str]:
     similar = r >= bh - SIMILAR_RETURN_GAP
     if similar and reduction >= MIN_DRAWDOWN_REDUCTION:
         return True, (f"rendimento {r:+.2%} simile al buy & hold {bh:+.2%} e max drawdown ridotto del "
-                      f"{reduction:.0%} ({dd:.1%} contro {bh_dd:.1%})")
+                      f"{reduction:.2%} ({dd:.1%} contro {bh_dd:.1%})")
     return False, (f"rendimento {r:+.2%} contro buy & hold {bh:+.2%}"
-                   + (f"; simile ma max drawdown ridotto solo del {reduction:.0%} (serve il 30%)" if similar else
+                   + (f"; simile ma max drawdown ridotto solo del {reduction:.2%} ({dd:.1%} contro {bh_dd:.1%}; "
+                      f"serve almeno il {MIN_DRAWDOWN_REDUCTION:.0%})" if similar else
                       f" (oltre {SIMILAR_RETURN_GAP * 100:.0f} punti sotto)"))
 
 

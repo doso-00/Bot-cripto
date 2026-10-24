@@ -19,8 +19,8 @@ ASSUMPTIONS = [
     "dell'exchange attuali applicati al passato, commissioni in USDT, nessun interesse sugli USDT).",
     "Variante di valutazione: risk manager senza stop per drawdown massimo (decisione A). L'effetto dello stop è "
     "misurato a parte con un riavvio simulato dopo 7 giorni; in paper e live lo stop resta definitivo.",
-    "Obiettivo dell'ottimizzazione: Sharpe annualizzato. Scelta finale: media di Sharpe più alta tra la "
-    "combinazione e le vicine nella griglia, tra quelle con almeno 30 operazioni sul training.",
+    "Obiettivo dell'ottimizzazione: Sharpe annualizzato. Scelta finale: punteggio robusto più alto = minimo tra lo "
+    "Sharpe della combinazione e la media delle vicine nella griglia, tra quelle con almeno 30 operazioni sul training.",
     "Walk-forward: ogni finestra fuori campione parte da capitale pieno e chiude la posizione alla sua fine "
     "(costi di uscita in più rispetto a un'operatività continua).",
     "Una sola validazione (2024) è un campione piccolo: un anno di un solo regime prevalente può favorire o "
