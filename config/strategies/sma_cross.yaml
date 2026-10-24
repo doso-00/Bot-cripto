@@ -1,3 +1,10 @@
-# Parametri di partenza per sma_cross (brief §5). Verranno ottimizzati solo sul training (Fase 3).
-fast: 20
-slow: 50
+# sma_cross (brief §5): investito quando la SMA veloce è sopra la SMA lenta.
+# params: valori per un backtest singolo. grid: combinazioni provate dall'ottimizzazione
+# (solo sul training). Le combinazioni non valide (fast >= slow) vengono scartate.
+# Periodi in candele: sull'1h 200 candele = circa 8 giorni.
+params:
+  fast: 20
+  slow: 50
+grid:
+  fast: [10, 20, 30, 50]
+  slow: [50, 100, 150, 200]

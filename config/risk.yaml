@@ -8,3 +8,8 @@ max_orders_per_hour: 6
 max_stale_intervals: 2        # ultima candela chiusa più vecchia di N intervalli: nessun ordine
 max_price_divergence: 0.005   # prezzo stimato vs ultimo close
 kill_switch_file: STOP
+
+# Solo backtest (decisione A del 2026-10-24, docs/DECISIONI.md): per misurare l'effetto della
+# regola di drawdown massimo si simula il "riavvio manuale" dopo questo numero di giorni.
+# In paper e live la regola resta uno stop vero, senza riavvio automatico.
+backtest_restart_after_days: 7

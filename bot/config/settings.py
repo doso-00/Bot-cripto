@@ -25,6 +25,17 @@ class RegimeSettings(BaseModel):
     threshold: float = Field(gt=0, lt=1)
 
 
+class OptimizationSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_months: int = Field(gt=0)
+    oos_months: int = Field(gt=0)
+    step_months: int = Field(gt=0)
+    min_trades_window: int = Field(ge=0)
+    min_trades_full: int = Field(ge=0)
+    confirm_symbol: str
+
+
 class PathSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,6 +69,7 @@ class Settings(BaseModel):
     min_rebalance_delta: float = Field(ge=0, le=1)
     data_quality: DataQualitySettings
     regimes: RegimeSettings
+    optimization: OptimizationSettings
     paths: PathSettings
 
     @field_validator("symbols")

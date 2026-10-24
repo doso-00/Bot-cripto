@@ -9,11 +9,21 @@ import pytest
 
 from bot.backtest.engine import run_backtest
 from bot.strategies import STRATEGIES, compute_targets
-from bot.strategies.sma_cross import SmaCrossParams
 from tests.backtest_helpers import LOOSE, config, price_candles, targets
 from tests.conftest import candles as synthetic_candles
 
-PARAMS = {"buy_and_hold": STRATEGIES["buy_and_hold"].params_model(), "sma_cross": SmaCrossParams(fast=5, slow=20)}
+_RAW_PARAMS = {
+    "buy_and_hold": {},
+    "sma_cross": {"fast": 5, "slow": 20},
+    "donchian_breakout": {"n_entry": 20, "n_exit": 10},
+    "rsi_mean_reversion": {"period": 7, "low": 40, "high": 60, "max_hold": 10},
+}
+_RAW_PARAMS.update({f"{k}_trend_filter": {**v, "sma_period": 50} for k, v in list(_RAW_PARAMS.items()) if k != "buy_and_hold"})
+PARAMS = {name: STRATEGIES[name].params_model.model_validate(raw) for name, raw in _RAW_PARAMS.items()}
+
+
+def test_every_strategy_is_covered():
+    assert set(PARAMS) == set(STRATEGIES)
 
 
 def scramble_after(df: pd.DataFrame, t: int, seed: int) -> pd.DataFrame:

@@ -1,0 +1,9 @@
+# donchian_breakout_trend_filter (brief §5, modificatore trend_filter): donchian_breakout applicata solo quando il
+# close è sopra la SMA di sma_period candele. Sull'1h: 200 candele = circa 8 giorni,
+# 4800 candele = 200 giorni (la classica "SMA 200 giornaliera").
+# Griglia: quella di donchian_breakout per i due valori di sma_period.
+params: {n_entry: 50, n_exit: 20, sma_period: 4800}
+grid:
+  n_entry: [20, 50, 100, 200]
+  n_exit: [10, 20, 50, 100]
+  sma_period: [200, 4800]

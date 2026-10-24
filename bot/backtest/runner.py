@@ -28,7 +28,12 @@ from bot.strategies import STRATEGIES, compute_targets, get_strategy, load_param
 log = logging.getLogger(__name__)
 
 SLIPPAGE_SENSITIVITY = (0.0, 0.0005, 0.001, 0.002)
-LABEL_RM, LABEL_NO_RM, LABEL_BH = "Strategia con risk manager", "Strategia senza risk manager", "Buy & hold"
+LABEL_EVAL = "Strategia (valutazione)"
+LABEL_BH = "Buy & hold"
+
+
+def restart_label(limits: RiskLimits) -> str:
+    return f"Strategia con stop per drawdown e riavvio dopo {limits.backtest_restart_after_days} giorni"
 
 ASSUMPTIONS = [
     "Esecuzione a mercato all'apertura della candela successiva al segnale, per l'intera quantità, "
@@ -39,9 +44,25 @@ ASSUMPTIONS = [
     "Nessuna esecuzione su candele a volume zero (es. durante un fermo): l'ordine slitta alla candela successiva.",
     "Nessun interesse sugli USDT non investiti.",
     "Posizione chiusa al close dell'ultima candela del periodo, con costi, per avere un rendimento netto completo.",
-    "Il risk manager in backtest valuta l'equity al close di ogni candela; dopo lo stop per drawdown il bot resta "
-    "fuori dal mercato fino a fine periodo (in reale servirebbe un riavvio manuale).",
+    "Variante di valutazione (decisione A, docs/DECISIONI.md): risk manager attivo (25% per acquisto, perdita "
+    "giornaliera, ordini per ora) ma senza lo stop per drawdown massimo, che in backtest fermerebbe qualsiasi "
+    "strategia su BTC dopo poche settimane. L'effetto dello stop si misura nella variante con riavvio simulato.",
+    "Il risk manager valuta l'equity al close di ogni candela; il riavvio dopo uno stop per drawdown è una "
+    "simulazione del riavvio manuale: in paper e live lo stop resta definitivo.",
 ]
+
+
+def backtest_config(settings: Settings, slippage_rate: float | None = None) -> BacktestConfig:
+    return BacktestConfig(settings.initial_capital_usdt, settings.fee_rate,
+                          settings.slippage_rate if slippage_rate is None else slippage_rate,
+                          settings.min_rebalance_delta)
+
+
+def simulate(candles: pd.DataFrame, targets: pd.Series, cfg: BacktestConfig, filters: SymbolFilters,
+             limits: RiskLimits | None, policy: str = "off"):
+    """Una variante: `limits=None` = senza risk manager (solo per il buy & hold)."""
+    risk = RiskManager(limits, drawdown_policy=policy) if limits is not None else None
+    return run_backtest(candles, targets, cfg, filters, risk)
 
 
 def _utc_now() -> datetime:
@@ -105,16 +126,15 @@ def run_full_backtest(
     targets = compute_targets(spec, history, params)[in_period]
     candles = history[in_period]
 
-    cfg = BacktestConfig(settings.initial_capital_usdt, settings.fee_rate, settings.slippage_rate,
-                         settings.min_rebalance_delta)
+    cfg = backtest_config(settings)
     ones = pd.Series(1.0, index=candles.index)
-    with_rm = run_backtest(candles, targets, cfg, filters, RiskManager(limits))
-    no_rm = run_backtest(candles, targets, cfg, filters, None)
-    bh = run_backtest(candles, ones, cfg, filters, None)
+    main = simulate(candles, targets, cfg, filters, limits, "off")
+    restart = simulate(candles, targets, cfg, filters, limits, "restart")
+    bh = simulate(candles, ones, cfg, filters, None)
 
     variants = [
-        Variant(LABEL_RM, with_rm, compute_metrics(with_rm, timeframe)),
-        Variant(LABEL_NO_RM, no_rm, compute_metrics(no_rm, timeframe)),
+        Variant(LABEL_EVAL, main, compute_metrics(main, timeframe)),
+        Variant(restart_label(limits), restart, compute_metrics(restart, timeframe)),
         Variant(LABEL_BH, bh, compute_metrics(bh, timeframe)),
     ]
     bh_metrics = variants[2].metrics
@@ -139,12 +159,12 @@ def run_full_backtest(
 
     sens_rows = []
     for slip in SLIPPAGE_SENSITIVITY:
-        c = BacktestConfig(cfg.initial_capital, cfg.fee_rate, slip, cfg.min_rebalance_delta)
-        r_rm = run_backtest(candles, targets, c, filters, RiskManager(limits))
-        r_bh = run_backtest(candles, ones, c, filters, None)
+        c = backtest_config(settings, slip)
+        r_main = simulate(candles, targets, c, filters, limits, "off")
+        r_bh = simulate(candles, ones, c, filters, None)
         sens_rows.append({"slippage": slip,
-                          f"rendimento {LABEL_RM.lower()}": r_rm.final_equity / cfg.initial_capital - 1,
-                          "operazioni": len(r_rm.trades),
+                          f"rendimento {LABEL_EVAL.lower()}": r_main.final_equity / cfg.initial_capital - 1,
+                          "operazioni": len(r_main.trades),
                           f"rendimento {LABEL_BH.lower()}": r_bh.final_equity / cfg.initial_capital - 1})
     sensitivity = pd.DataFrame(sens_rows)
 
@@ -172,7 +192,7 @@ def run_full_backtest(
             "period_name": period.name, "period_start": period.start, "period_end": period.end,
             "params_json": json.dumps(params_dict), "risk_enabled": True, "config_hash": ctx.config_hash,
             "git_commit": ctx.git_commit, "started_at": started, "ended_at": _utc_now(),
-        }, with_rm, variants[0].metrics)
+        }, main, variants[0].metrics)
 
     report_path = None
     if report_dir is not None:

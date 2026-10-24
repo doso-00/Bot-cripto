@@ -6,7 +6,7 @@ Bot di trading **spot** su Binance, progetto didattico/sperimentale. L'obiettivo
 - Specifica completa e fasi: [`docs/BRIEF_PROGETTO.md`](docs/BRIEF_PROGETTO.md)
 - Registro delle decisioni: [`docs/DECISIONI.md`](docs/DECISIONI.md)
 
-**Stato:** Fase 1 (dati) e Fase 2 (motore di backtest e benchmark) chiuse il 2026-10-24. Prossima: Fase 3 (strategie, ottimizzazione e validazione), in attesa della decisione sulla regola di drawdown massimo in backtest.
+**Stato:** Fase 1 (dati) e Fase 2 (motore di backtest e benchmark) chiuse il 2026-10-24. In corso: Fase 3 (strategie, ottimizzazione e validazione): codice pronto, da eseguire sui dati reali.
 
 ## Installazione
 
@@ -41,7 +41,8 @@ Kill switch: creare un file `STOP` nella root del progetto ferma il bot al ciclo
 | `uv run python -m bot.data.quality` | Report di qualità dei dati in `reports/` | Fase 1 |
 | `uv run python -m bot.backtest --strategy sma_cross` | Backtest con report HTML in `reports/` | Fase 2 |
 | `uv run python -m bot.report` | Report delle performance del paper trading | Fase 4 |
-| `uv run python -m bot.optimize --strategy sma_cross` | Ottimizzazione walk-forward | Fase 3 |
+| `uv run python -m bot.optimize --all` | Ottimizzazione walk-forward e confronto delle strategie | Fase 3 |
+| `uv run python -m bot.evaluate --confirm-test-period` | Test finale (una sola volta) | Fase 3 |
 | `uv run python -m bot.run --mode paper` | Avvia il paper trading sul Testnet | Fase 4 |
 
 ## Dati (Fase 1)
@@ -67,6 +68,17 @@ uv run python -m bot.backtest --strategy sma_cross --symbol ETH/USDT --timeframe
 - Periodi fissi: `train` (default, 2020–2023), `validation` (2024), `test` (2025–oggi). Il test si usa una sola volta per strategia e richiede `--confirm-test-period`.
 - Ogni backtest confronta tre varianti: strategia con risk manager, strategia senza, buy & hold. Verifica il buy & hold contro il calcolo manuale (soglia 0,01%) e salva il run nelle tabelle `runs` e `bt_*`.
 - Parametri delle strategie in `config/strategies/*.yaml`, limiti di rischio in `config/risk.yaml`.
+
+## Fase 3: ottimizzazione e confronto
+
+```bash
+uv run python -m bot.optimize --all                      # alcuni minuti; non legge mai il periodo di test
+uv run python -m bot.evaluate --confirm-test-period      # solo alla fine, una volta sola
+```
+
+- Strategie candidate: `sma_cross`, `donchian_breakout`, `rsi_mean_reversion` e le stesse con il modificatore `trend_filter` (suffisso `_trend_filter`). Griglie in `config/strategies/*.yaml`.
+- `bot.optimize`: per ogni strategia sceglie i parametri sul training (scelta robusta, niente picchi isolati), misura il walk-forward, valuta sulla validazione 2024 i quattro criteri del brief (con ETH/USDT per il criterio 4) e la robustezza su ETH e sul 4h. Report: `reports/fase3_confronto_*.html`.
+- `bot.evaluate`: test finale sul periodo 2025–oggi, solo per le strategie promosse dalla validazione e con i parametri congelati. Una strategia già testata non si ritesta. Report: `reports/fase3_test_finale_*.html`.
 
 ## Struttura
 

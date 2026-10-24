@@ -1,0 +1,8 @@
+# donchian_breakout (brief §5): entra sulla rottura del massimo delle ultime n_entry candele,
+# esce sulla rottura del minimo delle ultime n_exit candele. Vincolo: n_exit <= n_entry.
+params:
+  n_entry: 50
+  n_exit: 20
+grid:
+  n_entry: [20, 50, 100, 200]
+  n_exit: [10, 20, 50, 100]

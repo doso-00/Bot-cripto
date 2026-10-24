@@ -1,0 +1,9 @@
+# sma_cross_trend_filter (brief §5, modificatore trend_filter): sma_cross applicata solo quando il
+# close è sopra la SMA di sma_period candele. Sull'1h: 200 candele = circa 8 giorni,
+# 4800 candele = 200 giorni (la classica "SMA 200 giornaliera").
+# Griglia: quella di sma_cross per i due valori di sma_period.
+params: {fast: 20, slow: 50, sma_period: 4800}
+grid:
+  fast: [10, 20, 30, 50]
+  slow: [50, 100, 150, 200]
+  sma_period: [200, 4800]

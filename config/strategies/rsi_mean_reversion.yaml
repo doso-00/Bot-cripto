@@ -1,0 +1,12 @@
+# rsi_mean_reversion (brief §5): entra quando l'RSI scende sotto low, esce quando supera high
+# o dopo max_hold candele. Vincolo: low < high.
+params:
+  period: 14
+  low: 30
+  high: 70
+  max_hold: 24
+grid:
+  period: [7, 14]
+  low: [20, 30]
+  high: [60, 70]
+  max_hold: [24, 72]

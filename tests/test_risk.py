@@ -81,3 +81,28 @@ def test_max_orders_per_hour():
         rm.record_order(T0 + timedelta(minutes=minute))
     assert rm.review_order(T0 + timedelta(minutes=20), "sell", 10, 1000, 10) == 0
     assert rm.review_order(T0 + timedelta(minutes=61), "sell", 10, 1000, 10) == 10
+
+
+def test_drawdown_policy_restart_resumes_after_cooldown():
+    # Picco 120, crollo a 100 (stop), poi dopo 7 giorni il bot riparte con il picco azzerato
+    opens = [100, 100, 110, 120, 110, 100, 100] + [100] * 8 + [130, 140]
+    candles = price_candles(opens, start=datetime(2026, 1, 1), freq="1D")
+    lim = limits(max_order_fraction=1.0, max_daily_loss=0.5)
+    rm = RiskManager(lim, drawdown_policy="restart")
+    result = run_backtest(candles, targets([1] * len(opens)), config(fee=0.0, slippage=0.0), LOOSE, rm)
+
+    assert result.stopped_at == candles["open_time"].iat[5] and result.n_stops == 1
+    restart = [e for e in rm.events if e.action_taken.startswith("operatività ripresa")]
+    assert restart and restart[0].ts == candles["open_time"].iat[12]  # 7 giorni dopo lo stop
+    assert result.equity["position_qty"].iat[-1] > 0  # è tornato nel mercato
+    assert len(result.trades) == 2
+
+
+def test_drawdown_policy_off_never_stops():
+    opens = [100, 100, 110, 120, 60, 50, 100]
+    candles = price_candles(opens, start=datetime(2026, 1, 1), freq="1D")
+    lim = limits(max_order_fraction=1.0, max_daily_loss=0.9)
+    result = run_backtest(candles, targets([1] * len(opens)), config(fee=0.0, slippage=0.0), LOOSE,
+                          RiskManager(lim, drawdown_policy="off"))
+    assert result.stopped_at is None and result.n_stops == 0
+    assert (result.equity["position_qty"].iloc[2:] > 0).all()

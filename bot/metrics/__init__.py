@@ -66,6 +66,7 @@ def compute_metrics(result: BacktestResult, timeframe: str) -> dict:
         "n_rejected_orders": int((result.orders["status"] == "rifiutato").sum()) if len(result.orders) else 0,
         "n_risk_events": len(result.risk_events),
         "stopped_at": result.stopped_at,
+        "n_drawdown_stops": result.n_stops,
     }
 
 
@@ -93,8 +94,8 @@ def warnings_for(metrics: dict, is_benchmark: bool = False) -> list[str]:
         out.append(f"I costi assorbono il {metrics['costs_pct_of_gross']:.0%} del profitto lordo.")
     if metrics["stopped_at"] is not None:
         out.append(
-            f"Il risk manager ha fermato il bot il {metrics['stopped_at']} per drawdown massimo: "
-            "da lì in poi la strategia resta fuori dal mercato (in reale servirebbe un riavvio manuale)."
+            f"Lo stop per drawdown massimo è scattato {metrics.get('n_drawdown_stops', 1)} volte "
+            f"(la prima il {metrics['stopped_at']}): in paper e live ogni stop richiede un riavvio manuale."
         )
     if metrics["n_rejected_orders"] > 0:
         out.append(f"{metrics['n_rejected_orders']} ordini rifiutati (filtri dell'exchange o risk manager).")

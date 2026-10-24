@@ -22,6 +22,7 @@ class RiskLimits(BaseModel):
     max_stale_intervals: int = Field(gt=0)
     max_price_divergence: float = Field(gt=0, lt=1)
     kill_switch_file: str
+    backtest_restart_after_days: int = Field(gt=0)
 
 
 def load_risk_limits(path: Path | None = None) -> RiskLimits:

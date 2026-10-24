@@ -45,7 +45,8 @@ class BacktestResult:
     risk_events: pd.DataFrame
     initial_capital: float
     final_equity: float
-    stopped_at: datetime | None = None
+    stopped_at: datetime | None = None   # primo stop per drawdown massimo
+    n_stops: int = 0
 
 
 TRADE_COLUMNS = [
@@ -115,7 +116,7 @@ def run_backtest(
         if risk is not None:
             was_stopped = risk.stopped
             risk.on_candle_close(ts, equity)
-            if risk.stopped and not was_stopped:
+            if risk.stopped and not was_stopped and stopped_at is None:
                 stopped_at = ts
         target = 0.0 if (risk is not None and risk.stopped) else float(targets.iat[i])
         pending = target
@@ -135,6 +136,7 @@ def run_backtest(
         initial_capital=config.initial_capital,
         final_equity=s.cash + float(s.qty) * closes[-1],
         stopped_at=stopped_at,
+        n_stops=risk.n_stops if risk else 0,
     )
 
 

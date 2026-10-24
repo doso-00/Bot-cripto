@@ -34,6 +34,15 @@ regimes:
   lookback_days: 90
   threshold: 0.15
 
+# Ottimizzazione della Fase 3 (brief §6.2), solo sul periodo di training. Vedi docs/DECISIONI.md.
+optimization:
+  is_months: 12             # walk-forward: mesi su cui si sceglie la combinazione migliore...
+  oos_months: 3             # ...mesi successivi su cui la si verifica...
+  step_months: 3            # ...di quanti mesi si avanza ogni volta
+  min_trades_window: 5      # operazioni minime perché una combinazione sia scelta in una finestra
+  min_trades_full: 30       # operazioni minime sul training intero per la scelta finale
+  confirm_symbol: ETH/USDT  # robustezza: stessi parametri, altro simbolo (criterio 4 della Fase 3)
+
 paths:
   raw_data: data/raw
   database: data/market.duckdb

@@ -109,6 +109,62 @@ CREATE TABLE IF NOT EXISTS bt_orders (
     reason      VARCHAR
 );
 
+-- Fase 3: parametri scelti sul training per ogni strategia, con griglia e walk-forward.
+-- Il test finale usa SOLO parametri registrati qui, prima di guardare il periodo di test.
+CREATE TABLE IF NOT EXISTS param_selections (
+    selection_id       VARCHAR   PRIMARY KEY,
+    strategy           VARCHAR   NOT NULL,
+    symbol             VARCHAR   NOT NULL,
+    timeframe          VARCHAR   NOT NULL,
+    params_json        VARCHAR   NOT NULL,
+    grid_size          INTEGER   NOT NULL,
+    created_at         TIMESTAMP NOT NULL,
+    config_hash        VARCHAR   NOT NULL,
+    git_commit         VARCHAR,
+    train_json         VARCHAR   NOT NULL,
+    walk_forward_json  VARCHAR   NOT NULL,
+    validation_json    VARCHAR   NOT NULL,
+    passed_validation  BOOLEAN   NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS grid_results (
+    selection_id  VARCHAR NOT NULL,
+    params_json   VARCHAR NOT NULL,
+    sharpe        DOUBLE,
+    total_return  DOUBLE  NOT NULL,
+    max_drawdown  DOUBLE  NOT NULL,
+    n_trades      INTEGER NOT NULL,
+    robust_score  DOUBLE  NOT NULL,
+    PRIMARY KEY (selection_id, params_json)
+);
+
+CREATE TABLE IF NOT EXISTS wf_folds (
+    selection_id   VARCHAR   NOT NULL,
+    fold           INTEGER   NOT NULL,
+    is_start       TIMESTAMP NOT NULL,
+    is_end         TIMESTAMP NOT NULL,
+    oos_start      TIMESTAMP NOT NULL,
+    oos_end        TIMESTAMP NOT NULL,
+    params_json    VARCHAR,
+    is_sharpe      DOUBLE,
+    oos_return     DOUBLE    NOT NULL,
+    oos_bh_return  DOUBLE    NOT NULL,
+    oos_trades     INTEGER   NOT NULL,
+    PRIMARY KEY (selection_id, fold)
+);
+
+-- Test finale della Fase 3: una riga per strategia testata. Il test si esegue una sola volta
+CREATE TABLE IF NOT EXISTS final_tests (
+    selection_id  VARCHAR   NOT NULL,
+    strategy      VARCHAR   NOT NULL,
+    run_at        TIMESTAMP NOT NULL,
+    period_start  TIMESTAMP NOT NULL,
+    period_end    TIMESTAMP NOT NULL,
+    passed        BOOLEAN   NOT NULL,
+    repeated      BOOLEAN   NOT NULL,
+    results_json  VARCHAR   NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bt_risk_events (
     run_id       VARCHAR   NOT NULL,
     ts           TIMESTAMP NOT NULL,

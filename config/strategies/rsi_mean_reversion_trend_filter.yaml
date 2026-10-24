@@ -1,0 +1,11 @@
+# rsi_mean_reversion_trend_filter (brief §5, modificatore trend_filter): rsi_mean_reversion applicata solo quando il
+# close è sopra la SMA di sma_period candele. Sull'1h: 200 candele = circa 8 giorni,
+# 4800 candele = 200 giorni (la classica "SMA 200 giornaliera").
+# Griglia: quella di rsi_mean_reversion per i due valori di sma_period.
+params: {period: 14, low: 30, high: 70, max_hold: 24, sma_period: 4800}
+grid:
+  period: [7, 14]
+  low: [20, 30]
+  high: [60, 70]
+  max_hold: [24, 72]
+  sma_period: [200, 4800]
