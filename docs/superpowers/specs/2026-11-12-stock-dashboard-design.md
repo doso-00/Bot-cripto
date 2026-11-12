@@ -1,6 +1,19 @@
 # Dashboard azioni — documento di progetto
 
-Data: 2026-11-12 — Stato: bozza da approvare — Proprietario: Riccardo
+Data: 2026-11-12 — Stato: **approvato** il 2026-11-12 — Proprietario: Riccardo
+
+## 0. Decisioni di Riccardo (12/11)
+
+- Budget: **1000 €** disponibili. Nessuna posizione aperta (NVIDIA non posseduta).
+- Approvate: dipendenze `yfinance` e `scikit-learn`, accesso di rete agli host Yahoo nell'ambiente cloud, unione del
+  codice al branch principale (necessaria perché le esecuzioni programmate lo clonano da lì).
+- NVIDIA prima della trimestrale: Riccardo non ha preferenze. **Scelta di Claude:** nessun acquisto prima dei risultati;
+  la pagina mostra un piano con due scenari (sopra/sotto attese), l'aggiornamento delle 23:15 del 17/11 li valuta e la
+  mattina del 18/11 la pagina propone l'azione. Motivo: una trimestrale è un evento binario (±10% possibile in una notte),
+  e con un budget piccolo conviene rinunciare a parte del guadagno potenziale piuttosto che scommettere.
+- Uscite in perdita: **scelta di Claude** (raccomandazione accettata con "approvo tutto"): per le occasioni il piano
+  indica un ordine stop-loss da inserire su Trade Republic, con il livello in EUR; per la base lo stop resta un
+  livello di revisione sulla pagina.
 
 ## 1. Intento
 
