@@ -6,6 +6,7 @@ Dividends, Stock Splits; `info` dict; `calendar` dict; `dividends` Series tz-awa
 Task 5: `get_earnings_dates(limit)` (DataFrame indicizzato da "Earnings Date" tz-aware,
 colonne "EPS Estimate", "Reported EPS", "Surprise(%)"), `options` (tuple di scadenze
 'YYYY-MM-DD') e `option_chain(expiry)` (oggetto con `.calls` e `.puts`).
+Task 8: `info_error` fa sollevare l'accesso a `info` (Yahoo che non risponde sui fondamentali).
 """
 
 from types import SimpleNamespace
@@ -92,9 +93,11 @@ class FakeTicker:
         options: tuple[str, ...] = (),
         chains: dict | None = None,
         earnings_error: Exception | None = None,
+        info_error: Exception | None = None,
     ):
         self._history = history if history is not None else pd.DataFrame()
-        self.info = info if info is not None else {}
+        self._info = info if info is not None else {}
+        self._info_error = info_error
         self.calendar = calendar if calendar is not None else {}
         self.dividends = dividends if dividends is not None else pd.Series(dtype=float)
         self.fail_times = fail_times
@@ -104,6 +107,12 @@ class FakeTicker:
         self._chains = chains or {}
         self._earnings_error = earnings_error
         self.earnings_calls: list[int] = []
+
+    @property
+    def info(self) -> dict:
+        if self._info_error is not None:
+            raise self._info_error
+        return self._info
 
     def history(self, **kwargs) -> pd.DataFrame:
         self.history_calls.append(kwargs)

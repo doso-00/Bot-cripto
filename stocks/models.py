@@ -6,6 +6,7 @@ Fundamentals, EarningsInfo, Holding, TickerSnapshot, PortfolioSummary, Snapshot.
 
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -126,3 +127,71 @@ class SizingContext(BaseModel):
     holdings_eur: dict[PositionKind, float]
     open_opps: int
     halted: bool
+
+
+class TickerSnapshot(BaseModel):
+    """Situazione di un titolo seguito a fine run (Task 8).
+
+    `asof` è la data dell'ultima barra chiusa (se non ci sono prezzi: la data di oggi
+    nel fuso della borsa). Prezzi e indicatori nella valuta di quotazione `currency`;
+    `close_eur` e `pnl_net_eur` in euro. `change_1d_pct` e `drawdown_63d_pct` sono
+    frazioni (0.012 = +1,2%; 0.08 = 8% sotto il massimo a 63 giorni).
+    `proposed_by` è None per un titolo seguito solo perché è in portafoglio.
+    Valori None = non calcolabili (dati assenti o storia troppo corta).
+    """
+
+    ticker: str
+    name: str
+    currency: str | None
+    proposed_by: Literal["riccardo", "claude"] | None
+    asof: date
+    close: float | None = None
+    close_eur: float | None = None
+    change_1d_pct: float | None = None
+    sma200: float | None = None
+    atr14: float | None = None
+    rsi14: float | None = None
+    drawdown_63d_pct: float | None = None
+    high_63d: float | None = None
+    fundamentals: Fundamentals
+    dividend_years_without_cut: int = 0
+    earnings: EarningsInfo
+    holding: Holding | None = None
+    pnl_net_eur: float | None = None
+    signal: Signal
+    data_ok: bool
+    data_issues: list[str] = []
+
+
+class PortfolioSummary(BaseModel):
+    """Riepilogo del portafoglio in euro.
+
+    `invested_eur` = costo delle posizioni aperte; `value_eur` = valore di mercato delle
+    posizioni con un prezzo disponibile; `pnl_net_eur` = somma degli utili netti delle
+    singole posizioni (commissioni di acquisto e vendita e tasse stimate incluse);
+    `cash_eur` = budget − investito; `peak_value_eur` = massimo storico del valore totale
+    (liquidità + posizioni); `halted` = nuovi acquisti bloccati dal calo dal massimo.
+    """
+
+    invested_eur: float
+    value_eur: float
+    pnl_net_eur: float
+    cash_eur: float
+    halted: bool
+    peak_value_eur: float
+
+
+class Snapshot(BaseModel):
+    """Risultato di un run di `stocks.refresh`, scritto in `out/snapshot.json`.
+
+    `benchmarks`: ticker dell'indice -> variazione dell'ultimo giorno come frazione
+    (0.004 = +0,4%). `issues`: problemi da mostrare in alto nella pagina.
+    """
+
+    generated_at: datetime
+    run_slot: Literal["mattina", "sera", "manuale"]
+    eurusd: float
+    benchmarks: dict[str, float]
+    tickers: list[TickerSnapshot]
+    portfolio: PortfolioSummary
+    issues: list[str] = []
