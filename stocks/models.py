@@ -80,3 +80,49 @@ class EarningsInfo(BaseModel):
     past_moves_pct: list[float] = []
     avg_abs_move_pct: float | None = None
     expected_move_pct: float | None = None
+
+
+class Plan(BaseModel):
+    """Piano di uscita scritto prima dell'acquisto (Task 6).
+
+    `entry_ref`, `stop`, `target`, `review_level`, `exit_level` sono nella valuta del
+    titolo (`currency`); `stop_eur` e `target_eur` sono gli stessi livelli in euro,
+    arrotondati per difetto (stop) e per eccesso (obiettivo) al centesimo.
+    Base (core): solo livelli di revisione e di uscita, da controllare sulla pagina.
+    Occasione/evento: stop, obiettivo e data limite; `stop_order_on_tr` = True indica
+    che lo stop va inserito come ordine stop-loss su Trade Republic.
+    """
+
+    kind: PositionKind
+    entry_ref: float
+    stop: float | None = None
+    target: float | None = None
+    deadline: date | None = None
+    review_level: float | None = None
+    exit_level: float | None = None
+    currency: str
+    stop_eur: float | None = None
+    target_eur: float | None = None
+    scenarios: list[str] = []
+    stop_order_on_tr: bool = False
+
+
+class Signal(BaseModel):
+    """Azione suggerita per un titolo, con motivi in italiano e piano di uscita."""
+
+    action: Action
+    kind: PositionKind | None = None
+    amount_eur: float | None = None
+    plan: Plan | None = None
+    reasons: list[str] = []
+    # In Fase A nessuna regola è validata su dati storici: resta sempre False.
+    validated: bool = False
+    blocked_by: str | None = None
+
+
+class SizingContext(BaseModel):
+    """Situazione del portafoglio che serve per dimensionare un nuovo acquisto."""
+
+    holdings_eur: dict[PositionKind, float]
+    open_opps: int
+    halted: bool
