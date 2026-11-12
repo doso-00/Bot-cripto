@@ -29,3 +29,6 @@ build/
 
 # Area di lavoro locale degli agenti (non versionata)
 /.superpowers/
+
+# Output generato della dashboard azioni
+/out/

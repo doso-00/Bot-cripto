@@ -1,0 +1,34 @@
+# Parametri della dashboard azioni (Fase A). Valori dalla specifica; importi in euro.
+budget_eur: 1000
+min_order_eur: 100          # l'importo minimo vince sugli altri limiti
+fee_per_order_eur: 1.0
+capital_gains_tax: 0.26
+
+core_share: 0.80            # quota di budget per le posizioni base
+core_min_positions: 3
+core_max_positions: 5
+core_max_weight: 0.30       # peso massimo per titolo
+
+opp_max_total_share: 0.20   # tutte le occasioni insieme
+opp_max_open: 2
+event_max_eur: 100
+opp_max_stop_pct: 0.08
+opp_atr_stop_mult: 2.0
+opp_atr_target_mult: 4.0
+opp_min_reward_risk: 2.0
+opp_max_days: 30
+
+core_review_drawdown: 0.15  # dal prezzo medio: revisione
+core_exit_drawdown: 0.20    # dal prezzo medio: uscita
+portfolio_halt_drawdown: 0.15  # blocco nuovi acquisti dal massimo del portafoglio
+
+event_window_days: 5
+history_years: 5
+
+quality_min_roe: 0.08
+quality_max_debt_to_equity: 150
+quality_max_payout: 0.80
+core_pullback_min: 0.05
+core_pullback_max: 0.15
+opp_pullback_min: 0.10
+opp_rsi_max: 35

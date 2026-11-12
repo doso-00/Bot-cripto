@@ -1,0 +1,23 @@
+# Titoli seguiti. Riccardo può toglierli; la pagina mostra chi li ha proposti.
+items:
+  - ticker: NVDA
+    proposed_by: riccardo
+  - ticker: MSFT
+    proposed_by: claude
+    note: esempio da confermare
+  - ticker: JNJ
+    proposed_by: claude
+    note: esempio da confermare
+  - ticker: KO
+    proposed_by: claude
+    note: esempio da confermare
+  - ticker: ENEL.MI
+    proposed_by: claude
+    note: esempio da confermare
+  - ticker: ISP.MI
+    proposed_by: claude
+    note: esempio da confermare
+
+benchmarks:
+  US: "^GSPC"
+  EU: "^STOXX50E"
