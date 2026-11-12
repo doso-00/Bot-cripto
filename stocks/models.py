@@ -4,7 +4,7 @@ I Task successivi aggiungono qui, con i campi che producono: Plan, Signal,
 Fundamentals, EarningsInfo, Holding, TickerSnapshot, PortfolioSummary, Snapshot.
 """
 
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -60,3 +60,23 @@ class Fundamentals(BaseModel):
     roe: float | None = None
     market_cap: float | None = None
     ex_dividend_date: date | None = None
+
+
+class EarningsInfo(BaseModel):
+    """Situazione trimestrali di un titolo (Task 5).
+
+    Unità: `past_moves_pct`, `avg_abs_move_pct`, `expected_move_pct` sono frazioni
+    (0.09 = 9%) nonostante il suffisso; `last_surprise_pct` è in percentuale come
+    la dà Yahoo (5.2 = +5,2%). `past_moves_pct` è dal più recente al più vecchio.
+    `expected_move_pct` lo calcola `stocks.earnings.expected_move_pct` (serve la
+    rete): `earnings_info` lo lascia None e lo imposta il chiamante.
+    """
+
+    next_ts: datetime | None = None
+    days_to_next: int | None = None
+    reported_since_last_run: bool = False
+    last_ts: datetime | None = None
+    last_surprise_pct: float | None = None
+    past_moves_pct: list[float] = []
+    avg_abs_move_pct: float | None = None
+    expected_move_pct: float | None = None
