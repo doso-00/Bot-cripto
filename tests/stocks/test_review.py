@@ -430,3 +430,132 @@ def test_cli_invalid_snapshot_exits_2(tmp_path):
     (tmp_path / "snapshot.json").write_text("{rotto", encoding="utf-8")
     assert _run_cli(tmp_path) == 2
     assert not (tmp_path / "final.json").exists()
+
+
+# --- correzioni del primo giro di revisione -------------------------------------------
+
+
+def test_tighten_stop_never_lowers_eur_stop_with_fx_move():
+    # Piano creato con un cambio più favorevole (stop 90 USD = 76 EUR a 1.18);
+    # oggi il cambio è 1.25: 91 USD varrebbe 72.8 EUR, ma lo stop in EUR non può scendere.
+    snap, state = held_setup()
+    state.plans["AAA"].stop_eur = 76.27
+    snap.eurusd = 1.25
+    view = apply(snap, review_for("AAA", prop("tighten_stop", "91")), state, NOW)
+    assert len(view.applied) == 1
+    assert state.plans["AAA"].stop == 91.0
+    assert state.plans["AAA"].stop_eur == 76.27
+
+
+def test_tighten_stop_keeps_existing_eur_stop_when_close_eur_missing():
+    snap, state = held_setup()
+    snap.tickers[0].close_eur = None
+    apply(snap, review_for("AAA", prop("tighten_stop", "95")), state, NOW)
+    assert state.plans["AAA"].stop_eur == 76.0  # 95 / 1.25 = 76.0, mai None
+
+
+def test_scenarios_updated_after_tighten_and_shorten():
+    snap, state = held_setup()
+    state.plans["AAA"].scenarios = ["vecchio"]
+    review = review_for(
+        "AAA", prop("tighten_stop", "95.5"), prop("shorten_deadline", "2026-11-30")
+    )
+    view = apply(snap, review, state, NOW)
+    text = " ".join(state.plans["AAA"].scenarios)
+    assert "76,4" in text.replace(".", ",") and "30/11/2026" in text
+    assert "vecchio" not in text and "10/12/2026" not in text
+    assert (
+        view.snapshot.tickers[0].signal.plan.scenarios == state.plans["AAA"].scenarios
+    )
+
+
+def test_view_plan_matches_state_plan():
+    snap, state = held_setup()
+    snap.tickers[0].signal.plan = make_plan(stop=80.0)  # copia disallineata dallo stato
+    view = apply(
+        snap, review_for("AAA", prop("tighten_stop", "95"), prop("watch")), state, NOW
+    )
+    assert view.snapshot.tickers[0].signal.plan == state.plans["AAA"]
+    assert view.snapshot.tickers[0].signal.plan is not state.plans["AAA"]
+    degraded = apply(snap, None, state, NOW)
+    assert degraded.snapshot.tickers[0].signal.plan == state.plans["AAA"]
+
+
+def test_extend_cumulative_cap_30_days():
+    snap, state = held_setup()
+    first = (DEADLINE + timedelta(days=20)).isoformat()
+    second = (DEADLINE + timedelta(days=31)).isoformat()
+    third = (DEADLINE + timedelta(days=30)).isoformat()
+    view = apply(
+        snap,
+        review_for(
+            "AAA",
+            prop("extend_deadline", first, kind="evento"),
+            prop("extend_deadline", second, kind="evento"),
+            prop("extend_deadline", third, kind="evento"),
+        ),
+        state,
+        NOW,
+    )
+    assert [r.accepted for r in state.revisions] == [True, False, True]
+    assert state.plans["AAA"].original_deadline == DEADLINE
+    assert state.plans["AAA"].deadline == DEADLINE + timedelta(days=30)
+    assert len(view.rejected) == 1
+
+
+@pytest.mark.parametrize("action", [Action.VENDI, Action.RIDUCI, Action.DATI_MANCANTI])
+def test_request_review_does_not_override_stronger_actions(action):
+    snap, state = held_setup()
+    snap.tickers[0].signal.action = action
+    view = apply(snap, review_for("AAA", prop("request_review")), state, NOW)
+    assert len(view.rejected) == 1 and view.snapshot.tickers[0].signal.action == action
+
+
+def test_request_review_clears_amount():
+    snap, state = held_setup()
+    snap.tickers[0].signal.amount_eur = 100.0
+    view = apply(snap, review_for("AAA", prop("request_review")), state, NOW)
+    assert view.snapshot.tickers[0].signal.amount_eur is None
+
+
+def test_downgrade_buy_clears_kind_and_plan():
+    snap = make_snapshot(make_ticker("AAA", action=Action.COMPRA, plan=make_plan()))
+    snap.tickers[0].signal.kind = PositionKind.opportunity
+    view = apply(snap, review_for("AAA", prop("downgrade_buy")), State(), NOW)
+    sig = view.snapshot.tickers[0].signal
+    assert sig.kind is None and sig.plan is None
+
+
+@pytest.mark.parametrize("kind", ["shorten_deadline", "extend_deadline"])
+def test_deadline_proposals_rejected_when_plan_has_no_deadline(kind):
+    snap, state = held_setup(deadline=None)
+    view = apply(
+        snap, review_for("AAA", prop(kind, "2026-12-01", kind="evento")), state, NOW
+    )
+    assert len(view.rejected) == 1 and state.plans["AAA"].deadline is None
+
+
+def test_future_review_is_ignored():
+    snap, state = held_setup()
+    review = review_for("AAA", prop("tighten_stop", "95"))
+    review.generated_at = NOW + timedelta(minutes=11)
+    assert not apply(snap, review, state, NOW).review_available
+    review.generated_at = NOW + timedelta(minutes=5)
+    assert apply(snap, review, state, NOW).review_available
+
+
+def test_duplicate_ticker_keeps_first():
+    snap, state = held_setup()
+    review = review_for("AAA", prop("tighten_stop", "95"))
+    review.tickers.append(review_for("AAA", prop("tighten_stop", "97")).tickers[0])
+    view = apply(snap, review, state, NOW)
+    assert state.plans["AAA"].stop == 95.0
+    assert len(view.applied) == 1 and len(view.rejected) == 1
+    assert "ticker duplicato" in view.rejected[0].reason
+
+
+def test_journal_close_is_none_when_close_missing():
+    snap = make_snapshot(make_ticker("AAA", close=None))
+    state = State()
+    apply(snap, review_for("AAA", event_class="legale"), state, NOW)
+    assert state.journal[0].close is None

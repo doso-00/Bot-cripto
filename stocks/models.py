@@ -99,6 +99,8 @@ class Plan(BaseModel):
     stop: float | None = None
     target: float | None = None
     deadline: date | None = None
+    # Data limite del primo piano: tetto cumulativo alle proroghe (R14); None per i piani base.
+    original_deadline: date | None = None
     review_level: float | None = None
     exit_level: float | None = None
     currency: str

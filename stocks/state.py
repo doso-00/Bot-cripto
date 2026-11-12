@@ -51,7 +51,7 @@ class JournalEntry(BaseModel):
     ts: datetime
     ticker: str
     action: Action
-    close: float
+    close: float | None = None
     reasons: list[str]
     source: Literal["engine", "claude"]
     event_class: str | None = None
@@ -87,7 +87,9 @@ def save_state(state: State, path: Path) -> None:
     """Scrive lo stato in modo atomico: file temporaneo nella stessa cartella, poi replace."""
     path = Path(path)
     data = state.model_dump_json(indent=2)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(data)
@@ -126,7 +128,9 @@ def holdings_from_trades(trades: list[Trade]) -> dict[str, Holding]:
             qty = max(qty - t.qty, 0.0)
         state[t.ticker] = (qty, avg)
     return {
-        tk: Holding(ticker=tk, kind=meta[tk][1], qty=q, avg_price=a, currency=meta[tk][0])
+        tk: Holding(
+            ticker=tk, kind=meta[tk][1], qty=q, avg_price=a, currency=meta[tk][0]
+        )
         for tk, (q, a) in state.items()
         if q > _QTY_EPS
     }

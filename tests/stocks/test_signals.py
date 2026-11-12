@@ -432,6 +432,14 @@ def test_build_plan_core_levels(s):
     assert plan.currency == "USD"
 
 
+def test_build_plan_sets_original_deadline(s):
+    flat = make_prices([100.0] * 80, spread=1.0)
+    plan = build_plan(K.opportunity, 95.0, flat, ASOF, "EUR", EURUSD, s)
+    assert plan.original_deadline == plan.deadline == ASOF + timedelta(days=30)
+    core = build_plan(K.core, 200.0, make_prices(rising()), ASOF, "USD", EURUSD, s)
+    assert core.original_deadline is None
+
+
 def test_build_plan_opportunity_levels(s):
     flat = make_prices([100.0] * 80, spread=1.0)  # ATR = 2, massimo 63g = 100
     plan = build_plan(K.opportunity, 95.0, flat, ASOF, "EUR", EURUSD, s)

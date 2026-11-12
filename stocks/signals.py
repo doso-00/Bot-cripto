@@ -175,6 +175,31 @@ def quality_check(
 # --- Piani -------------------------------------------------------------------
 
 
+def opportunity_scenarios(
+    stop: float,
+    stop_eur: float,
+    target: float,
+    target_eur: float,
+    deadline: date,
+    currency: str,
+) -> list[str]:
+    """Testi dei tre scenari di un piano con stop (occasione/evento).
+
+    Esposta per rigenerare i testi quando la revisione di Claude modifica stop o scadenza.
+    """
+    return [
+        (
+            f"Subito dopo l'acquisto inserisci su Trade Republic un ordine stop-loss a {_num(stop_eur)} € "
+            f"({_money(stop, currency)})."
+        ),
+        f"Se raggiunge l'obiettivo di {_money(target, currency)} (circa {_num(target_eur)} €): vendi.",
+        (
+            f"Se {_art('il', f'{deadline:%d/%m/%Y}')} non ha toccato né lo stop né l'obiettivo: "
+            "vendi alla scadenza."
+        ),
+    ]
+
+
 def build_plan(
     kind: PositionKind,
     entry: float,
@@ -235,20 +260,13 @@ def build_plan(
         stop=stop,
         target=target,
         deadline=deadline,
+        original_deadline=deadline,
         currency=currency,
         stop_eur=stop_eur,
         target_eur=target_eur,
-        scenarios=[
-            (
-                f"Subito dopo l'acquisto inserisci su Trade Republic un ordine stop-loss a {_num(stop_eur)} € "
-                f"({_money(stop, currency)})."
-            ),
-            f"Se raggiunge l'obiettivo di {_money(target, currency)} (circa {_num(target_eur)} €): vendi.",
-            (
-                f"Se {_art('il', f'{deadline:%d/%m/%Y}')} non ha toccato né lo stop né l'obiettivo: "
-                "vendi alla scadenza."
-            ),
-        ],
+        scenarios=opportunity_scenarios(
+            stop, stop_eur, target, target_eur, deadline, currency
+        ),
         stop_order_on_tr=True,
     )
 

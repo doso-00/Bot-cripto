@@ -15,13 +15,16 @@ import logging
 import math
 import sys
 from datetime import date, datetime, timedelta
+from decimal import ROUND_FLOOR
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
 
+from stocks.data import to_eur
 from stocks.models import Action, Plan, Snapshot, TickerSnapshot
 from stocks.review import ClaudeReview, GlossaryItem, Proposal, TickerReview
+from stocks.signals import _round_eur, opportunity_scenarios
 from stocks.state import JournalEntry, PlanRevision, State, load_state, save_state
 
 logger = logging.getLogger("stocks.apply_review")
@@ -33,6 +36,8 @@ FINAL_FILE = "final.json"
 
 # Oltre queste ore la revisione è considerata vecchia: notizie stantie non si applicano.
 MAX_REVIEW_AGE = timedelta(hours=12)
+# Tolleranza sull'orologio: una revisione datata oltre questo margine nel futuro è sospetta.
+MAX_REVIEW_FUTURE = timedelta(minutes=10)
 # Proroga massima della data limite, in giorni.
 MAX_EXTEND_DAYS = 30
 NO_POSITION_REASON = "nessuna posizione aperta"
@@ -84,22 +89,47 @@ def _parse_date(value: str | None) -> date:
         ) from None
 
 
-def _stop_eur(ticker: TickerSnapshot, stop: float) -> float | None:
-    """Stop in euro, arrotondato per difetto al centesimo, col cambio implicito del close."""
-    if ticker.close is None or ticker.close_eur is None or ticker.close <= 0:
-        return None
-    return math.floor(stop * ticker.close_eur / ticker.close * 100 + 1e-9) / 100
+def _tightened(plan: Plan, new_stop: float, eurusd: float) -> Plan:
+    """Piano con lo stop alzato.
+
+    Lo stop in euro è quello da inserire su Trade Republic e va fissato col cambio del
+    momento (stesso arrotondamento per difetto del motore), ma non può mai scendere:
+    se il cambio si è mosso contro, resta il valore precedente. Mai None su un valore esistente.
+    """
+    stop_eur = plan.stop_eur
+    try:
+        candidate = _round_eur(to_eur(new_stop, plan.currency, eurusd), ROUND_FLOOR)
+        stop_eur = candidate if stop_eur is None else max(candidate, stop_eur)
+    except ValueError:  # valuta non supportata: si tiene il valore precedente
+        pass
+    return _with_fresh_scenarios(
+        plan.model_copy(update={"stop": new_stop, "stop_eur": stop_eur})
+    )
 
 
-def _set_stop(plan: Plan, ticker: TickerSnapshot, stop: float) -> Plan:
-    return plan.model_copy(update={"stop": stop, "stop_eur": _stop_eur(ticker, stop)})
+def _with_fresh_scenarios(plan: Plan) -> Plan:
+    """Rigenera i testi degli scenari dopo una modifica di stop o scadenza.
+
+    Solo per i piani con stop, obiettivo e scadenza (occasione/evento); gli altri non hanno
+    testi che citano questi livelli.
+    """
+    if None in (plan.stop, plan.stop_eur, plan.target, plan.target_eur, plan.deadline):
+        return plan
+    scenarios = opportunity_scenarios(
+        plan.stop,
+        plan.stop_eur,
+        plan.target,
+        plan.target_eur,
+        plan.deadline,
+        plan.currency,
+    )
+    return plan.model_copy(update={"scenarios": scenarios})
 
 
-def _set_plan(state: State, ticker: TickerSnapshot, **changes) -> None:
-    """Applica `changes` al piano nello stato e alla copia nel segnale della vista."""
-    state.plans[ticker.ticker] = state.plans[ticker.ticker].model_copy(update=changes)
-    if ticker.signal.plan is not None:
-        ticker.signal.plan = ticker.signal.plan.model_copy(update=changes)
+def _commit_plan(state: State, ticker: TickerSnapshot, plan: Plan) -> None:
+    """Scrive il piano nello stato e una copia identica nel segnale della vista."""
+    state.plans[ticker.ticker] = plan
+    ticker.signal.plan = plan.model_copy(deep=True)
 
 
 def _evaluate(
@@ -107,6 +137,7 @@ def _evaluate(
     ticker: TickerSnapshot,
     state: State,
     today: date,
+    eurusd: float,
     view_watched: set[str],
 ) -> tuple[str, str | None, str | None]:
     """Valuta e applica una proposta. Ritorna (campo, vecchio, nuovo) o solleva _Rejected."""
@@ -123,6 +154,8 @@ def _evaluate(
         old = signal.action.value
         signal.action = Action.NESSUNA_AZIONE
         signal.amount_eur = None
+        signal.kind = None
+        signal.plan = None
         signal.reasons = [
             *signal.reasons,
             f"Declassato dalla revisione notizie: {proposal.reason}",
@@ -135,10 +168,13 @@ def _evaluate(
         raise _Rejected(NO_POSITION_REASON)
 
     if kind == "request_review":
-        if signal.action in (Action.VENDI, Action.RIDUCI):
-            raise _Rejected(f"l'azione {signal.action.value} è più severa di RIVEDI")
+        if signal.action in (Action.VENDI, Action.RIDUCI, Action.DATI_MANCANTI):
+            raise _Rejected(
+                f"l'azione {signal.action.value} non va sostituita da RIVEDI"
+            )
         old = signal.action.value
         signal.action = Action.RIVEDI
+        signal.amount_eur = None
         return "action", old, signal.action.value
 
     if kind == "tighten_stop":
@@ -156,9 +192,7 @@ def _evaluate(
                 f"il nuovo stop {new_stop} non è sotto il prezzo {ticker.close}"
             )
         old = _fmt(plan.stop)
-        state.plans[ticker.ticker] = _set_stop(plan, ticker, new_stop)
-        if signal.plan is not None:
-            signal.plan = _set_stop(signal.plan, ticker, new_stop)
+        _commit_plan(state, ticker, _tightened(plan, new_stop, eurusd))
         return "stop", old, _fmt(new_stop)
 
     # shorten_deadline / extend_deadline
@@ -180,9 +214,19 @@ def _evaluate(
             raise _Rejected(
                 f"la nuova data {new_deadline} non è dopo quella attuale {old}"
             )
-        if new_deadline > plan.deadline + timedelta(days=MAX_EXTEND_DAYS):
-            raise _Rejected(f"la proroga supera {MAX_EXTEND_DAYS} giorni")
-    _set_plan(state, ticker, deadline=new_deadline)
+        # Tetto cumulativo (R14): dalla data limite del primo piano, non dall'ultima proroga.
+        base = plan.original_deadline or plan.deadline
+        if new_deadline > base + timedelta(days=MAX_EXTEND_DAYS):
+            raise _Rejected(
+                f"la proroga supera {MAX_EXTEND_DAYS} giorni dalla data limite originale {base}"
+            )
+    updated = plan.model_copy(
+        update={
+            "deadline": new_deadline,
+            "original_deadline": plan.original_deadline or plan.deadline,
+        }
+    )
+    _commit_plan(state, ticker, _with_fresh_scenarios(updated))
     return "deadline", old, new_deadline.isoformat()
 
 
@@ -198,19 +242,28 @@ def apply(
     Non modifica `snapshot` (lavora su una copia profonda, `FinalView.snapshot`), ma
     MODIFICA `state`: piani (stop e data limite), `revisions` (una per proposta, accettata
     o rifiutata) e `journal` (una riga per ogni titolo con evento). Spetta al chiamante
-    salvarlo. Revisione None o più vecchia di 12 ore: nessuna modifica.
+    salvarlo. Revisione None, più vecchia di 12 ore o datata nel futuro (>10 minuti): nessuna modifica.
     """
     view_snapshot = snapshot.model_copy(deep=True)
 
-    if (
-        review is not None
-        and _aware(now) - _aware(review.generated_at) > MAX_REVIEW_AGE
-    ):
-        logger.warning(
-            "Revisione di Claude del %s più vecchia di 12 ore: ignorata",
-            review.generated_at,
-        )
-        review = None
+    if review is not None:
+        age = _aware(now) - _aware(review.generated_at)
+        if age > MAX_REVIEW_AGE:
+            logger.warning(
+                "Revisione di Claude del %s più vecchia di 12 ore: ignorata",
+                review.generated_at,
+            )
+            review = None
+        elif -age > MAX_REVIEW_FUTURE:
+            logger.warning(
+                "Revisione di Claude datata nel futuro (%s): ignorata",
+                review.generated_at,
+            )
+            review = None
+    # Il piano mostrato deve coincidere con quello nello stato (fonte di verità).
+    for t in view_snapshot.tickers:
+        if t.holding is not None and t.ticker in state.plans:
+            t.signal.plan = state.plans[t.ticker].model_copy(deep=True)
     if review is None:
         return FinalView(snapshot=view_snapshot, review_available=False)
 
@@ -221,9 +274,17 @@ def apply(
     reviews: dict[str, TickerReview] = {}
     watched: set[str] = set()
 
+    seen: set[str] = set()
     for tr in review.tickers:
         ticker = by_ticker.get(tr.ticker)
-        if ticker is not None:
+        duplicate = tr.ticker in seen
+        seen.add(tr.ticker)
+        if duplicate:
+            logger.warning(
+                "%s: ticker duplicato nella revisione, si tiene il primo", tr.ticker
+            )
+            ticker = None
+        elif ticker is not None:
             reviews[tr.ticker] = tr
         for proposal in tr.proposals:
             field = {
@@ -237,8 +298,14 @@ def apply(
             old = new = None
             try:
                 if ticker is None:
-                    raise _Rejected("ticker non presente nello snapshot")
-                field, old, new = _evaluate(proposal, ticker, state, today, watched)
+                    raise _Rejected(
+                        "ticker duplicato"
+                        if duplicate
+                        else "ticker non presente nello snapshot"
+                    )
+                field, old, new = _evaluate(
+                    proposal, ticker, state, today, view_snapshot.eurusd, watched
+                )
                 accepted, reason = True, proposal.reason
             except _Rejected as exc:
                 accepted, reason = False, f"{proposal.reason} [rifiutata: {exc}]"
@@ -264,7 +331,7 @@ def apply(
                     ts=now,
                     ticker=tr.ticker,
                     action=ticker.signal.action,
-                    close=ticker.close if ticker.close is not None else 0.0,
+                    close=ticker.close,
                     reasons=[tr.summary],
                     source="claude",
                     event_class=tr.event_class,
