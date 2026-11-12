@@ -6,6 +6,8 @@ Fundamentals, EarningsInfo, Holding, TickerSnapshot, PortfolioSummary, Snapshot.
 
 from enum import StrEnum
 
+from pydantic import BaseModel
+
 
 class Action(StrEnum):
     """Azione suggerita per un titolo (testo mostrato in pagina)."""
@@ -27,3 +29,13 @@ class PositionKind(StrEnum):
     core = "core"
     opportunity = "opportunity"
     event = "event"
+
+
+class Holding(BaseModel):
+    """Posizione in portafoglio inserita da Riccardo (portfolio.yaml)."""
+
+    ticker: str
+    kind: PositionKind
+    qty: float
+    avg_price: float
+    currency: str
