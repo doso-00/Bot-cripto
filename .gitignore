@@ -26,3 +26,6 @@ build/
 .vscode/
 .idea/
 .DS_Store
+
+# Area di lavoro locale degli agenti (non versionata)
+/.superpowers/
