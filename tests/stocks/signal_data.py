@@ -40,7 +40,12 @@ def core_pullback_closes() -> list[float]:
 
 
 def opportunity_closes() -> list[float]:
-    """Salita fino a 100 poi dieci cali da 2 fino a 80 (−20%, RSI molto basso)."""
+    """Salita fino a 100 poi dieci cali da 2,5 fino a 75 (−25%, RSI molto basso)."""
+    return rising() + [100.0 - 2.5 * k for k in range(1, 11)]
+
+
+def taxed_out_closes() -> list[float]:
+    """Salita fino a 100 poi dieci cali da 2 fino a 80 (−20%): rapporto sopra 2 solo senza tasse."""
     return rising() + [100.0 - 2 * k for k in range(1, 11)]
 
 

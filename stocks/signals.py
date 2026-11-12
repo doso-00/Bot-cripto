@@ -12,7 +12,7 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 import pandas as pd
 
 from stocks.config import StocksSettings
-from stocks.costs import breakeven_price
+from stocks.costs import round_trip_fees
 from stocks.data import to_eur
 from stocks.indicators import atr, drawdown_from_high, rsi, sma
 from stocks.models import (
@@ -34,6 +34,12 @@ SMA_WINDOW = 200
 ATR_WINDOW = 14
 RSI_WINDOW = 14
 HIGH_WINDOW = 63  # circa 3 mesi di borsa
+# Trimestrale passata da più di così (giorni) senza utile riportato: evento "scaduto"
+# (ruling R10), l'ATTENDI decade e le regole normali proseguono.
+STALE_EVENT_DAYS = 3
+STALE_EVENT_REASON = (
+    "Risultati della trimestrale non ancora riportati dalla fonte dati."
+)
 
 # Tolleranza relativa sui confronti con le soglie: 1 - 90/100 vale 0.09999999999999998,
 # che senza tolleranza risulterebbe "sotto il 10%".
@@ -177,7 +183,8 @@ def build_plan(
 
     Base: revisione a −15% e uscita a −20% da `entry`, nessuna data limite.
     Occasione ed evento (stesse formule): stop = max(entry − 2×ATR14, entry × 0,92);
-    obiettivo = min(entry + 4×ATR14, massimo delle chiusure degli ultimi 63 giorni);
+    obiettivo = entry + 6×ATR14, limitato al massimo delle chiusure degli ultimi 63 giorni
+    solo se quel massimo è sopra `entry` (ruling R9);
     data limite = asof + 30 giorni di calendario. Usa solo le barre con data <= asof.
     Solleva ValueError se non ci sono barre sufficienti per l'ATR.
     """
@@ -211,7 +218,9 @@ def build_plan(
         )
     high = float(prices["close"].iloc[-HIGH_WINDOW:].max())
     stop = max(entry - s.opp_atr_stop_mult * atr14, entry * (1 - s.opp_max_stop_pct))
-    target = min(entry + s.opp_atr_target_mult * atr14, high)
+    target = entry + s.opp_atr_target_mult * atr14
+    if high > entry:
+        target = min(target, high)
     deadline = asof + timedelta(days=s.opp_max_days)
     stop_eur = _round_eur(to_eur(stop, currency, eurusd), ROUND_FLOOR)
     target_eur = _round_eur(to_eur(target, currency, eurusd), ROUND_CEILING)
@@ -246,12 +255,22 @@ def _earnings_soon(e: EarningsInfo, s: StocksSettings) -> bool:
     """Trimestrale entro la finestra e utile non ancora pubblicato.
 
     `next_ts` resta valorizzato finché Yahoo non riporta l'utile (Task 5), quindi
-    `days_to_next` <= 0 vuol dire "data passata, risultati non ancora usciti" (ruling R2).
+    `days_to_next` <= 0 vuol dire "data passata, risultati non ancora usciti" (ruling R2);
+    oltre `STALE_EVENT_DAYS` giorni dopo la data l'evento è scaduto (ruling R10).
     """
     return (
         e.next_ts is not None
         and e.days_to_next is not None
-        and e.days_to_next <= s.event_window_days
+        and -STALE_EVENT_DAYS <= e.days_to_next <= s.event_window_days
+    )
+
+
+def _event_stale(e: EarningsInfo) -> bool:
+    """Data della trimestrale passata da più di `STALE_EVENT_DAYS` giorni, utile non riportato."""
+    return (
+        e.next_ts is not None
+        and e.days_to_next is not None
+        and e.days_to_next < -STALE_EVENT_DAYS
     )
 
 
@@ -411,20 +430,29 @@ def _evaluate_short_holding(
 # --- Nuovi ingressi ----------------------------------------------------------
 
 
-def _cost_per_share(
-    close: float, close_eur: float, ctx: SizingContext, s: StocksSettings
+def _reward_risk(
+    close: float,
+    close_eur: float,
+    plan: Plan,
+    ctx: SizingContext,
+    s: StocksSettings,
 ) -> float:
-    """Commissioni di andata e ritorno per azione, nella valuta del titolo.
+    """Rapporto guadagno netto / perdita netta di un'occasione (spec §6.3, ruling R8).
 
     Quantità = importo che `max_order_eur` consente ora per un'occasione / prezzo in euro;
     se l'importo è 0 (acquisto comunque bloccato dopo) si usa l'ordine minimo.
+    Tutto nella valuta del titolo: le commissioni in euro si convertono col rapporto
+    close / close_eur. Guadagno = max(0, (obiettivo − close)·qty − commissioni) al netto
+    delle tasse; perdita = (close − stop)·qty + commissioni (nessuna tassa sulle perdite).
     """
     amount, _ = max_order_eur(
         PositionKind.opportunity, ctx.holdings_eur, ctx.open_opps, s
     )
     qty = (amount if amount > 0 else s.min_order_eur) / close_eur
-    cost_eur = breakeven_price(close_eur, qty, s) - close_eur
-    return cost_eur * close / close_eur
+    fees = round_trip_fees(s) * close / close_eur
+    reward = max(0.0, (plan.target - close) * qty - fees) * (1 - s.capital_gains_tax)
+    risk = (close - plan.stop) * qty + fees
+    return reward / risk if risk > 0 else float("-inf")
 
 
 def _apply_sizing(sig: Signal, ctx: SizingContext, s: StocksSettings) -> Signal:
@@ -500,15 +528,13 @@ def _evaluate_entry(
         plan = build_plan(
             PositionKind.opportunity, close, prices, asof, currency, eurusd, s
         )
-        risk = close - plan.stop
-        reward = plan.target - close - _cost_per_share(close, close_eur, ctx, s)
-        ratio = reward / risk if risk > 0 else float("-inf")
+        ratio = _reward_risk(close, close_eur, plan, ctx, s)
         if _ge(ratio, s.opp_min_reward_risk):
             reasons = [
                 dd_text,
                 f"RSI a 14 giorni a {_num(rsi14, 0)}: vendite eccessive, possibile rimbalzo.",
                 (
-                    f"Rapporto obiettivo/rischio {_num(ratio, 1)} (commissioni incluse, tasse escluse): "
+                    f"Rapporto obiettivo/rischio {_num(ratio)} (commissioni e tasse incluse): "
                     "è una stima, non una probabilità."
                 ),
                 f"Occasione di breve: durata massima {s.opp_max_days} giorni.",
@@ -520,8 +546,9 @@ def _evaluate_entry(
                 reasons=reasons,
             )
         rejected = (
-            f"Occasione scartata: rapporto obiettivo/rischio {_num(ratio, 1)}, "
-            f"sotto il minimo di {_num(s.opp_min_reward_risk, 1)}."
+            f"Occasione scartata: rapporto obiettivo/rischio {_num(ratio)} "
+            "(commissioni e tasse incluse), "
+            f"sotto il minimo di {_num(s.opp_min_reward_risk)}."
         )
 
     # Regola 7: motivo principale per cui non c'è un ingresso base
@@ -617,15 +644,19 @@ def evaluate(
     # Regole 2 e 3: posizione aperta
     if holding is not None:
         if holding.kind == PositionKind.core:
-            return _evaluate_core_holding(close, holding, plan, e, s)
-        return _evaluate_short_holding(close, holding, plan, asof)
-
+            sig = _evaluate_core_holding(close, holding, plan, e, s)
+        else:
+            sig = _evaluate_short_holding(close, holding, plan, asof)
     # Regola 4: trimestrale imminente, nessun acquisto prima dei risultati
-    if _earnings_soon(e, s):
+    elif _earnings_soon(e, s):
         return _wait_for_earnings(e, close, currency)
-
     # Regole 5-7, poi blocchi e importi
-    sig = _evaluate_entry(
-        prices, f, div_years, asof, ctx, currency, close, close_eur, eurusd, s
-    )
-    return _apply_sizing(sig, ctx, s)
+    else:
+        sig = _evaluate_entry(
+            prices, f, div_years, asof, ctx, currency, close, close_eur, eurusd, s
+        )
+        sig = _apply_sizing(sig, ctx, s)
+
+    if _event_stale(e):
+        sig = sig.model_copy(update={"reasons": [*sig.reasons, STALE_EVENT_REASON]})
+    return sig

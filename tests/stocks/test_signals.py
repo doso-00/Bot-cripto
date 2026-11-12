@@ -27,6 +27,7 @@ from tests.stocks.signal_data import (
     opportunity_closes,
     rising,
     rr_rejected_closes,
+    taxed_out_closes,
 )
 
 A = Action
@@ -211,6 +212,34 @@ def test_rule4_earnings_soon_gives_wait(s, days):
     assert "9,5%" in joined and "4,0%" in joined
 
 
+def test_stale_unreported_event_releases_attendi(s):
+    prices = make_prices(core_pullback_closes())
+    # 3 giorni dopo la data senza utile: ancora ATTENDI
+    assert run(prices, s, e=earnings_in(-3)).action == A.ATTENDI
+    # oltre 3 giorni: evento scaduto, le regole normali proseguono (qui ingresso base)
+    sig = run(prices, s, e=earnings_in(-4))
+    assert sig.action == A.COMPRA
+    assert sig.kind == K.core
+    assert (
+        sig.reasons[-1]
+        == "Risultati della trimestrale non ancora riportati dalla fonte dati."
+    )
+    # vale anche per una posizione aperta
+    held = run(
+        make_prices(rising(240, 90.0, 110.0)),
+        s,
+        holding=core_holding(),
+        e=earnings_in(-10),
+    )
+    assert held.action == A.TIENI
+    assert (
+        held.reasons[-1]
+        == "Risultati della trimestrale non ancora riportati dalla fonte dati."
+    )
+    # nessun evento: nessun avviso
+    assert "fonte dati" not in " ".join(run(prices, s).reasons)
+
+
 def test_rule4_not_applied_outside_window(s):
     sig = run(make_prices(core_pullback_closes()), s, e=earnings_in(6))
     assert sig.action == A.COMPRA
@@ -274,34 +303,52 @@ def test_rule6_opportunity_entry(s):
     assert sig.kind == K.opportunity
     assert sig.amount_eur == pytest.approx(200.0)  # 20% del budget
     plan = sig.plan
-    # ATR = 6 (high-low costante); stop = max(80 - 12, 80 * 0.92) = 73.6
-    assert plan.stop == pytest.approx(73.6)
-    # obiettivo = min(80 + 24, massimo a 63 giorni 100) = 100
+    # ATR = 6 (high-low costante); stop = max(75 - 12, 75 * 0.92) = 69
+    assert plan.stop == pytest.approx(69.0)
+    # obiettivo = min(75 + 36, massimo a 63 giorni 100) = 100
     assert plan.target == pytest.approx(100.0)
     assert plan.deadline == ASOF + timedelta(days=30)
     assert plan.stop_order_on_tr is True
     assert plan.review_level is None and plan.exit_level is None
-    # rapporto (100 - 80 - 0,8) / 6,4 = 3,0
-    assert any("3,0" in r for r in sig.reasons)
+    # in euro: qty = 200 / 75; guadagno (25·qty − 2) × 0,74 = 47,85; perdita 6·qty + 2 = 18
+    assert any("2,66" in r and "commissioni e tasse incluse" in r for r in sig.reasons)
 
 
 def test_opportunity_rejected_when_reward_risk_below_2(s):
-    # close 89: stop = max(77, 81.88) = 81.88; obiettivo = 100;
-    # costi = 2 € × 89 / 200 € = 0,89 per azione -> (11 - 0,89) / 7,12 = 1,42 < 2
+    # close 89: stop = max(77, 81.88) = 81.88; obiettivo = 100; qty = 200 / 89
+    # guadagno (11·qty − 2) × 0,74 = 16,81; perdita 7,12·qty + 2 = 18,0 -> 0,93 < 2
     sig = run(make_prices(rr_rejected_closes(), spread=3.0), s, f=bad_fundamentals())
     assert sig.action == A.NESSUNA_AZIONE
     assert sig.plan is None
-    assert any("obiettivo/rischio" in r and "1,4" in r for r in sig.reasons)
+    assert any("obiettivo/rischio" in r and "0,93" in r for r in sig.reasons)
+
+
+def test_reward_risk_includes_taxes(s):
+    # close 80, stop 73,6, obiettivo 100, qty = 200 / 80 = 2,5 (in euro):
+    # senza tasse (50 − 2) / (16 + 2) = 2,67 -> passerebbe;
+    # con il 26% (50 − 2) × 0,74 / 18 = 1,97 -> scartata.
+    prices = make_prices(taxed_out_closes(), spread=3.0)
+    taxed = run(prices, s, f=good_fundamentals("EUR"))
+    assert taxed.action == A.NESSUNA_AZIONE
+    assert any(
+        "1,97" in r and "commissioni e tasse incluse" in r for r in taxed.reasons
+    )
+
+    untaxed = run(
+        prices, StocksSettings(capital_gains_tax=0), f=good_fundamentals("EUR")
+    )
+    assert untaxed.action == A.COMPRA
+    assert any("2,67" in r for r in untaxed.reasons)
 
 
 def test_opportunity_costs_use_allowed_order_amount(s):
-    # Occasioni già a 100 €: restano 100 € -> costi per azione 2 € × 80 / 100 € = 1,6
-    # (il doppio che con 200 €) -> rapporto (20 - 1,6) / 6,4 = 2,875.
+    # Occasioni già a 100 €: restano 100 € -> qty = 100 / 75 (in euro), commissioni pesano
+    # il doppio che con 200 €: guadagno (25·qty − 2) × 0,74 = 23,19; perdita 6·qty + 2 = 10
     ctx = SizingContext(holdings_eur={K.opportunity: 100.0}, open_opps=1, halted=False)
     sig = run(make_prices(opportunity_closes(), spread=3.0), s, ctx=ctx)
     assert sig.action == A.COMPRA
     assert sig.amount_eur == pytest.approx(100.0)
-    assert any("2,9" in r for r in sig.reasons)
+    assert any("2,32" in r for r in sig.reasons)
 
 
 # --- Regola 7 ----------------------------------------------------------------
@@ -356,15 +403,17 @@ def test_buy_never_validated_in_phase_a(s):
 
 def test_stop_eur_rounded_down(s):
     sig = run(make_prices(opportunity_closes(), spread=3.0), s)
-    # 73,6 / 1,17 = 62,9059... -> 62,90 (per difetto); 100 / 1,17 = 85,4700... -> 85,48 (per eccesso)
-    assert sig.plan.stop_eur == 62.90
+    # 69 / 1,17 = 58,9743... -> 58,97 (per difetto); 100 / 1,17 = 85,4700... -> 85,48 (per eccesso)
+    assert sig.plan.stop_eur == 58.97
     assert sig.plan.target_eur == 85.48
 
     # in EUR un livello già a 2 decimali non perde un centesimo per errori di virgola mobile
     eur = run(
-        make_prices(opportunity_closes(), spread=3.0), s, f=good_fundamentals("EUR")
+        make_prices(taxed_out_closes(), spread=3.0),
+        StocksSettings(capital_gains_tax=0),
+        f=good_fundamentals("EUR"),
     )
-    assert eur.plan.stop == pytest.approx(73.6)
+    assert eur.plan.stop == 80 * 0.92 != 73.6  # 73.60000000000001
     assert eur.plan.stop_eur == 73.60
     assert eur.plan.target_eur == 100.00
 
@@ -387,7 +436,7 @@ def test_build_plan_opportunity_levels(s):
     flat = make_prices([100.0] * 80, spread=1.0)  # ATR = 2, massimo 63g = 100
     plan = build_plan(K.opportunity, 95.0, flat, ASOF, "EUR", EURUSD, s)
     assert plan.stop == pytest.approx(91.0)  # max(95 - 4, 95 × 0.92 = 87.4)
-    assert plan.target == pytest.approx(100.0)  # min(95 + 8, 100)
+    assert plan.target == pytest.approx(100.0)  # min(95 + 12, 100)
     assert plan.deadline == ASOF + timedelta(days=30)
     assert plan.stop_order_on_tr is True
     assert plan.stop_eur == 91.00 and plan.target_eur == 100.00
@@ -409,3 +458,14 @@ def test_build_plan_opportunity_levels(s):
         build_plan(
             K.opportunity, 95.0, make_prices([100.0] * 5), ASOF, "EUR", EURUSD, s
         )
+
+
+def test_build_plan_target_above_entry_when_entry_over_high(s):
+    flat = make_prices([100.0] * 80, spread=1.0)  # ATR = 2, massimo 63g = 100 < entry
+    plan = build_plan(K.opportunity, 105.0, flat, ASOF, "EUR", EURUSD, s)
+    assert plan.target == pytest.approx(105.0 + 6 * 2.0)  # massimo ignorato
+    assert plan.target > plan.entry_ref
+    assert plan.stop == pytest.approx(101.0)  # max(105 - 4, 105 × 0.92 = 96.6)
+    # con entry pari al massimo il limite non si applica (il massimo non è sopra entry)
+    at_high = build_plan(K.opportunity, 100.0, flat, ASOF, "EUR", EURUSD, s)
+    assert at_high.target == pytest.approx(112.0)

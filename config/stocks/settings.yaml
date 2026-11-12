@@ -14,7 +14,7 @@ opp_max_open: 2
 event_max_eur: 100
 opp_max_stop_pct: 0.08
 opp_atr_stop_mult: 2.0
-opp_atr_target_mult: 4.0
+opp_atr_target_mult: 6.0
 opp_min_reward_risk: 2.0
 opp_max_days: 30
 

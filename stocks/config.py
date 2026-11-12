@@ -33,7 +33,7 @@ class StocksSettings(BaseModel):
     event_max_eur: float = Field(default=100, ge=0)
     opp_max_stop_pct: float = Field(default=0.08, gt=0, lt=1)
     opp_atr_stop_mult: float = Field(default=2.0, gt=0)
-    opp_atr_target_mult: float = Field(default=4.0, gt=0)
+    opp_atr_target_mult: float = Field(default=6.0, gt=0)
     opp_min_reward_risk: float = Field(default=2.0, gt=0)
     opp_max_days: int = Field(default=30, gt=0)
 
