@@ -13,7 +13,7 @@ from stocks.models import (
     PositionKind,
     SizingContext,
 )
-from stocks.signals import build_plan, evaluate, quality_check
+from stocks.signals import build_plan, evaluate, holding_entry, quality_check
 from tests.stocks.signal_data import (
     ASOF,
     EURUSD,
@@ -469,3 +469,80 @@ def test_build_plan_target_above_entry_when_entry_over_high(s):
     # con entry pari al massimo il limite non si applica (il massimo non è sopra entry)
     at_high = build_plan(K.opportunity, 100.0, flat, ASOF, "EUR", EURUSD, s)
     assert at_high.target == pytest.approx(112.0)
+
+
+# --- Valuta delle posizioni (ruling R11) -------------------------------------
+
+
+def test_eur_holding_of_usd_stock_rule2_uses_eur(s):
+    # Ultima chiusura 230 USD = 196,58 € (cambio 1,17). Prezzo medio TR 246 €:
+    # in euro −20,1% -> VENDI; confrontando USD con EUR sarebbe −6,5% (TIENI, sbagliato).
+    prices = make_prices(rising(240, 200.0, 250.0) + [230.0])
+    holding = Holding(
+        ticker="NVDA", kind=K.core, qty=1, avg_price=246.0, currency="EUR"
+    )
+    sig = run(prices, s, holding=holding)
+    assert sig.action == A.VENDI
+    assert "196,58 €" in sig.reasons[0] and "246,00 €" in sig.reasons[0]
+
+    review = run(prices, s, holding=holding.model_copy(update={"avg_price": 232.0}))
+    assert review.action == A.RIVEDI  # 196,58 / 232 = −15,3%
+
+    # regola 3 invariata: stop e obiettivo nella valuta del titolo (USD)
+    opp = holding.model_copy(update={"kind": K.opportunity, "avg_price": 200.0})
+    plan = Plan(
+        kind=K.opportunity,
+        entry_ref=234.0,
+        stop=231.0,
+        target=260.0,
+        deadline=ASOF + timedelta(days=10),
+        currency="USD",
+        stop_order_on_tr=True,
+    )
+    stopped = run(prices, s, holding=opp, plan=plan)
+    assert stopped.action == A.VENDI
+    assert "230,00 USD" in stopped.reasons[0] and "231,00 USD" in stopped.reasons[0]
+
+
+def test_holding_same_currency_unchanged(s):
+    prices = make_prices(rising(240, 90.0, 110.0) + [79.0])
+    eur = Holding(
+        ticker="ENEL.MI", kind=K.core, qty=10, avg_price=100.0, currency="EUR"
+    )
+    assert run(prices, s, f=good_fundamentals("EUR"), holding=eur).action == A.VENDI
+
+    usd = core_holding(100.0)
+    hold = run(make_prices(rising(240, 90.0, 110.0) + [95.0]), s, holding=usd)
+    assert hold.action == A.TIENI  # 95 USD vs 100 USD, il cambio non entra
+    assert "95,00 USD" in hold.reasons[0]
+
+    assert holding_entry(usd, "USD", EURUSD) == (100.0, [])
+
+
+def test_holding_entry_converts_eur_avg_to_usd():
+    holding = Holding(
+        ticker="NVDA", kind=K.core, qty=1, avg_price=200.0, currency="EUR"
+    )
+    entry, reasons = holding_entry(holding, "USD", EURUSD)
+    assert entry == pytest.approx(234.0)
+    assert reasons == [
+        "Prezzo di carico convertito in dollari al cambio di oggi (approssimazione)."
+    ]
+    with pytest.raises(ValueError):
+        holding_entry(holding.model_copy(update={"currency": "USD"}), "EUR", EURUSD)
+
+
+def test_unsupported_currency_pair_is_dati_mancanti(s):
+    prices = make_prices(rising(240, 90.0, 110.0) + [79.0])
+    cases = [
+        ("USD", "EUR"),  # posizione in dollari su titolo in euro
+        ("EUR", None),  # valuta del titolo sconosciuta
+        ("GBP", "USD"),
+    ]
+    for holding_ccy, listing_ccy in cases:
+        holding = Holding(
+            ticker="XYZ", kind=K.core, qty=1, avg_price=100.0, currency=holding_ccy
+        )
+        sig = run(prices, s, f=good_fundamentals(listing_ccy), holding=holding)
+        assert sig.action == A.DATI_MANCANTI, (holding_ccy, listing_ccy)
+        assert sig.reasons == ["Valuta della posizione diversa da quella del titolo."]

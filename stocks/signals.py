@@ -41,6 +41,11 @@ STALE_EVENT_REASON = (
     "Risultati della trimestrale non ancora riportati dalla fonte dati."
 )
 
+CURRENCY_MISMATCH_REASON = "Valuta della posizione diversa da quella del titolo."
+CONVERTED_ENTRY_REASON = (
+    "Prezzo di carico convertito in dollari al cambio di oggi (approssimazione)."
+)
+
 # Tolleranza relativa sui confronti con le soglie: 1 - 90/100 vale 0.09999999999999998,
 # che senza tolleranza risulterebbe "sotto il 10%".
 _TOL = 1e-9
@@ -349,26 +354,56 @@ def _wait_for_earnings(e: EarningsInfo, close: float, currency: str) -> Signal:
 # --- Posizioni aperte --------------------------------------------------------
 
 
+def holding_entry(
+    holding: Holding, listing_currency: str | None, eurusd: float
+) -> tuple[float, list[str]]:
+    """Prezzo di carico nella valuta del titolo (quella delle barre) e motivi aggiuntivi.
+
+    Trade Republic mostra e addebita i titoli USA in euro, quindi una posizione in EUR
+    su un titolo in USD è il caso normale (ruling R11): il prezzo medio si converte in
+    dollari al cambio di oggi (`avg × eurusd`), un'approssimazione dichiarata nei motivi.
+    Serve dove occorre un ingresso nella valuta del titolo (es. `build_plan` in T8).
+    Altre combinazioni di valute -> ValueError.
+    """
+    if holding.currency == listing_currency:
+        return holding.avg_price, []
+    if holding.currency == "EUR" and listing_currency == "USD":
+        return holding.avg_price * eurusd, [CONVERTED_ENTRY_REASON]
+    raise ValueError(CURRENCY_MISMATCH_REASON)
+
+
+def _currencies_compatible(holding: Holding, listing_currency: str | None) -> bool:
+    return holding.currency == listing_currency or (
+        holding.currency == "EUR" and listing_currency == "USD"
+    )
+
+
 def _evaluate_core_holding(
     close: float,
+    close_eur: float,
     holding: Holding,
     plan: Plan | None,
     e: EarningsInfo,
     s: StocksSettings,
 ) -> Signal:
-    """Regola 2: soglie dal prezzo medio di carico."""
+    """Regola 2: soglie dal prezzo medio di carico.
+
+    Il confronto avviene nella valuta della posizione: se è in EUR su un titolo in
+    USD (ruling R11) si confronta il prezzo in euro con il prezzo medio in euro.
+    """
     avg = holding.avg_price
     cur = holding.currency
-    change = close / avg - 1
+    price = close_eur if cur == "EUR" else close
+    change = price / avg - 1
     exit_level = avg * (1 - s.core_exit_drawdown)
     review_level = avg * (1 - s.core_review_drawdown)
-    where = f"Prezzo {_money(close, cur)}, {_pct(change, signed=True)} rispetto al tuo prezzo medio {_money(avg, cur)}"
-    if _le(close, exit_level):
+    where = f"Prezzo {_money(price, cur)}, {_pct(change, signed=True)} rispetto al tuo prezzo medio {_money(avg, cur)}"
+    if _le(price, exit_level):
         action = Action.VENDI
         reasons = [
             f"{where}: raggiunta la soglia di uscita ({_pct(-s.core_exit_drawdown, 0)}). Vendi."
         ]
-    elif _le(close, review_level):
+    elif _le(price, review_level):
         action = Action.RIVEDI
         reasons = [
             (
@@ -387,10 +422,13 @@ def _evaluate_core_holding(
 
 
 def _evaluate_short_holding(
-    close: float, holding: Holding, plan: Plan | None, asof: date
+    close: float, currency: str, holding: Holding, plan: Plan | None, asof: date
 ) -> Signal:
-    """Regola 3: occasione o evento aperto, uscita per stop, obiettivo o scadenza."""
-    cur = holding.currency
+    """Regola 3: occasione o evento aperto, uscita per stop, obiettivo o scadenza.
+
+    Stop e obiettivo del piano sono nella valuta del titolo, come `close`.
+    """
+    cur = currency
     kind = holding.kind
     if plan is None:
         return Signal(
@@ -601,8 +639,9 @@ def evaluate(
     3. occasione/evento posseduto: stop, obiettivo, scadenza; 4. trimestrale imminente
     -> ATTENDI; 5. ingresso base; 6. occasione; 7. NESSUNA_AZIONE.
     Poi gli acquisti passano dal blocco del portafoglio e dai limiti di importo.
-    `prices`: indice `datetime.date`, colonne open/high/low/close; valuta = quella della
-    posizione o, se non posseduto, `f.currency`.
+    `prices`: indice `datetime.date`, colonne open/high/low/close, nella valuta di
+    quotazione `f.currency`. Una posizione può essere nella stessa valuta o in EUR su un
+    titolo in USD (prezzo di Trade Republic); altrimenti DATI_MANCANTI.
     """
     prices = _upto(prices, asof)
 
@@ -623,7 +662,10 @@ def evaluate(
                 )
             ],
         )
-    currency = holding.currency if holding is not None else f.currency
+    # Le barre sono sempre nella valuta di quotazione del titolo (ruling R11).
+    currency = f.currency
+    if holding is not None and not _currencies_compatible(holding, currency):
+        return Signal(action=Action.DATI_MANCANTI, reasons=[CURRENCY_MISMATCH_REASON])
     if currency is None:
         return Signal(
             action=Action.DATI_MANCANTI, reasons=["Valuta del titolo non disponibile."]
@@ -644,9 +686,9 @@ def evaluate(
     # Regole 2 e 3: posizione aperta
     if holding is not None:
         if holding.kind == PositionKind.core:
-            sig = _evaluate_core_holding(close, holding, plan, e, s)
+            sig = _evaluate_core_holding(close, close_eur, holding, plan, e, s)
         else:
-            sig = _evaluate_short_holding(close, holding, plan, asof)
+            sig = _evaluate_short_holding(close, currency, holding, plan, asof)
     # Regola 4: trimestrale imminente, nessun acquisto prima dei risultati
     elif _earnings_soon(e, s):
         return _wait_for_earnings(e, close, currency)
