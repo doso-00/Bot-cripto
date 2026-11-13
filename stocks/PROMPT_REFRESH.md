@@ -10,6 +10,11 @@ Il messaggio programmato che ti ha avviato contiene due valori, da usare al post
 - `<ARTIFACT_URL>`: l'indirizzo della pagina (`https://claude.ai/...`). **Se manca, fermati e segnalalo**: non
   pubblicare mai senza URL, creeresti una pagina nuova al posto di quella che Riccardo apre.
 
+**Cartella di lavoro:** ogni chiamata Bash riparte dalla sua cartella iniziale, non da quella del comando precedente.
+Per questo **ogni** blocco di comandi qui sotto inizia con `cd /home/user/Bot-cripto &&` (o con `cd /home/user/Bot-cripto`
+come prima riga): copialo sempre così. Senza, `uv run python -m stocks...` fallisce ("No module named stocks") o
+scrive `out/` nel posto sbagliato. Negli strumenti (`ArtifactData`, `Artifact`) usa sempre percorsi assoluti.
+
 ## Chi decide cosa
 
 - I **numeri** (prezzi, indicatori, azioni suggerite, importi, stop, obiettivi, date limite) li calcola **solo il
@@ -35,17 +40,21 @@ Il messaggio programmato che ti ha avviato contiene due valori, da usare al post
 Carica prima gli strumenti differiti con ToolSearch: `select:WebSearch,ArtifactData,PushNotification`.
 `Artifact` e Bash sono già disponibili. `add_repo` qui **non** esiste: si clona con git.
 
+Se ToolSearch non restituisce uno degli strumenti:
+- **ArtifactData** mancante: senza stato non si può lavorare. Fermati e riportalo (pagina e stato restano com'erano).
+- **WebSearch** mancante: salta la sezione 3 (nessun `out/claude_review.json`); la pagina uscirà con l'avviso
+  "revisione notizie non disponibile". Scrivilo nel messaggio finale.
+- **PushNotification** mancante: fai tutto il resto e scrivi nel messaggio finale che l'avviso non è stato inviato
+  (con il testo che avresti mandato, se c'era).
+
 ```bash
 if [ -d /home/user/Bot-cripto/.git ]; then
   git -C /home/user/Bot-cripto pull --ff-only
 else
   git clone https://github.com/doso-00/Bot-cripto.git /home/user/Bot-cripto
 fi
-cd /home/user/Bot-cripto && uv sync
-rm -rf out && mkdir -p out/db   # mai riusare file di un run precedente
+cd /home/user/Bot-cripto && uv sync && rm -rf out && mkdir -p out/db   # mai riusare file di un run precedente
 ```
-
-Da qui in avanti tutti i comandi partono da `/home/user/Bot-cripto`.
 
 ## 1. Leggere lo stato dal database della pagina
 
@@ -56,35 +65,39 @@ database della pagina: collezione `state`, documento `current`. I suoi campi son
 1. `ArtifactData` azione `get`, `url` = `<ARTIFACT_URL>`, `collection` = `state`, `doc_id` = `current`,
    `out_dir` = `/home/user/Bot-cripto/out/db`.
 2. Esiti possibili:
-   - **documento trovato**: il file salvato può avvolgere i campi in un involucro (`id`, `data`, `version`). Estrai i
-     campi con lo script qui sotto e annota la **versione del documento** (`version` dell'involucro o quella indicata
-     dal risultato dello strumento). Attenzione: anche lo stato ha un campo `version` (vale 1, è la versione del
-     formato): **non** è la versione del documento.
-   - **documento inesistente** (lo strumento dice esplicitamente che non esiste): è il primo run. Non creare
-     `out/state.json`; il codice parte da uno stato vuoto. Annota "primo run".
+   - **documento trovato**: il risultato ha una riga come
+     `- "current"  4477 bytes  version 1  "/home/user/Bot-cripto/out/db/state/current.json"`. Il file
+     `out/db/state/current.json` contiene i campi dello stato senza involucro. **Annota la versione del documento** da
+     quella riga (`version N`): serve alla sezione 7. Attenzione: anche lo stato ha un campo `version` (vale 1, è la
+     versione del formato): **non** è la versione del documento. Poi esegui lo script qui sotto.
+   - **documento inesistente**: il risultato dice `No document "current" in collection "state".` È il primo run. Non
+     creare `out/state.json`; il codice parte da uno stato vuoto. Annota "primo run".
    - **qualsiasi altro errore** (rete, permessi, file illeggibile): **fermati**. Non proseguire con uno stato vuoto,
      perché al salvataggio cancelleresti le operazioni di Riccardo. Riporta l'errore nel messaggio finale.
 
 ```bash
-uv run python - out/db/<FILE_SALVATO> <<'EOF'
+cd /home/user/Bot-cripto && uv run python - out/db/state/current.json <<'EOF'
 import json, sys
 from stocks.state import State
 raw = json.load(open(sys.argv[1], encoding="utf-8"))
+# Di norma i campi sono al primo livello; l'involucro id/data/version è solo un ripiego per sicurezza.
 wrapped = isinstance(raw, dict) and isinstance(raw.get("data"), dict) and "trades" not in raw
 fields = raw["data"] if wrapped else raw
 State.model_validate(fields)  # errore = stato non valido: fermati e segnalalo
-# Si scrivono i campi così come sono (nessun campo perso), dopo averli validati.
 json.dump(fields, open("out/state.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-print("versione del documento:", raw.get("version") if wrapped else "vedi il risultato dello strumento")
 print("operazioni:", len(fields.get("trades", [])), "- piani:", len(fields.get("plans", {})))
+if wrapped:
+    print("involucro trovato, versione del documento:", raw.get("version"))
 EOF
 ```
+
+Nota: `stocks.refresh` e `stocks.apply_review` rileggono e riscrivono `out/state.json` attraverso il modello `State`;
+un campo che il modello non conosce non sopravvive al run.
 
 ## 2. Aggiornare dati e segnali
 
 ```bash
-uv run python -m stocks.refresh --slot <SLOT>
-echo "exit code: $?"
+cd /home/user/Bot-cripto && uv run python -m stocks.refresh --slot <SLOT>; echo "exit code: $?"
 ```
 
 - **Exit 0**: `out/snapshot.json` scritto (alcuni titoli possono avere `data_ok = false`: è normale, la pagina lo
@@ -103,7 +116,7 @@ echo "exit code: $?"
 Questo è il tuo compito principale. Leggi `out/snapshot.json`, poi trova i titoli da guardare:
 
 ```bash
-uv run python - <<'EOF'
+cd /home/user/Bot-cripto && uv run python - <<'EOF'
 import json
 s = json.load(open("out/snapshot.json", encoding="utf-8"))
 for t in s["tickers"]:
@@ -146,6 +159,9 @@ Per ogni titolo dell'elenco:
    percentuali presi dagli articoli. Scrivi "risultati sopra le attese", non "EPS 1,05 $ contro 0,98 $". Le uniche
    eccezioni sono i campi strutturati: `published` (data dell'articolo, `null` se incerta) e `value` delle proposte.
 6. Proposte (sezione 4) **solo se le notizie le giustificano**. Nel dubbio, nessuna proposta.
+7. **Risultati già letti in un run precedente** (nei giorni dopo una trimestrale): mantieni la stessa `event_class`
+   finché le notizie ne parlano, così la pagina resta coerente, ma non presentarli come una novità ("i risultati
+   pubblicati nei giorni scorsi…"). L'avviso sul telefono non si ripete: lo controlla lo script della sezione 8.
 
 ### Schema (deve rispettare esattamente `stocks/review.py`)
 
@@ -183,6 +199,8 @@ e la pagina esce senza notizie. Campi ammessi, e nessun altro:
 - `proposals[]`: `type`, `value` (stringa o `null`), `reason`, `reason_kind` (`evento`, `notizia`, `tecnico`).
 - `market_note`: facoltativa, una o due frasi sul contesto di mercato, senza numeri non presenti nello snapshot.
 
+Scrivi il file in `/home/user/Bot-cripto/out/claude_review.json`.
+
 ## 4. Proposte ammesse
 
 Puoi proporre solo questi tipi. Il validatore rifiuta tutto il resto e la pagina mostra le proposte scartate con il
@@ -203,7 +221,7 @@ o la media a 200 giorni dello snapshot) che rispetti le condizioni; stop, date l
 in `out/state.json`:
 
 ```bash
-uv run python - <<'EOF'
+cd /home/user/Bot-cripto && uv run python - <<'EOF'
 import json
 from pathlib import Path
 path = Path("out/state.json")
@@ -217,7 +235,7 @@ EOF
 ## 5. Validare e applicare la revisione
 
 ```bash
-uv run python -c "from stocks.review import ClaudeReview; import json; ClaudeReview.model_validate_json(open('out/claude_review.json').read())"
+cd /home/user/Bot-cripto && uv run python -c "from stocks.review import ClaudeReview; import json; ClaudeReview.model_validate_json(open('out/claude_review.json').read())"
 ```
 
 Se fallisce, leggi l'errore, correggi il JSON **una volta** e riprova. Se fallisce ancora, cancella
@@ -225,8 +243,7 @@ Se fallisce, leggi l'errore, correggi il JSON **una volta** e riprova. Se fallis
 normale) e lo segnali nel messaggio finale.
 
 ```bash
-uv run python -m stocks.apply_review
-uv run python -m stocks.render
+cd /home/user/Bot-cripto && uv run python -m stocks.apply_review && uv run python -m stocks.render; echo "exit code: $?"
 ```
 
 `apply_review` scrive `out/final.json` e aggiorna `out/state.json` (piani, revisioni, registro); `render` scrive
@@ -244,47 +261,60 @@ uv run python -m stocks.render
 
 `ArtifactData` azione `set`, `url` = `<ARTIFACT_URL>`, `collection` = `state`, `doc_id` = `current`,
 `file_path` = `/home/user/Bot-cripto/out/state.json`, `if_version` = la versione del documento letta alla sezione 1
-(ometti `if_version` solo al primo run, quando il documento non esisteva).
+(ometti `if_version` solo al primo run, quando il documento non esisteva). Se va a buon fine il risultato dice
+"The document is now at version N".
 
 Se lo strumento segnala un **conflitto di versione**, un altro run o Riccardo hanno modificato lo stato nel frattempo
 (per esempio aggiungendo un'operazione). Non forzare la scrittura: rileggi il documento (sezione 1, che sovrascrive
 `out/state.json`), poi ripeti le sezioni 2, 5, 6 e 7 riusando `out/claude_review.json` già scritto (se ha meno di 12
-ore). Se il conflitto si ripete una seconda volta, fermati e riportalo: lo stato non salvato si recupera al run
-successivo, le operazioni di Riccardo restano nel documento.
+ore). Se il conflitto si ripete una seconda volta, fermati: le operazioni di Riccardo restano nel documento e lo stato
+di questo run si ricalcola al run successivo. Nel messaggio finale scrivi che lo stato non è stato salvato e che
+**un'operazione appena registrata potrebbe non comparire in pagina fino al prossimo aggiornamento**.
 
 ## 8. Avviso sul telefono
 
 L'avviso serve solo per le **novità**, non per ripetere a ogni run la stessa azione. `stocks.refresh` scrive nel
 registro (`journal` dello stato) una riga con `source: "engine"` solo quando l'azione di un titolo **cambia**, e le
-dà come `ts` lo stesso istante del `generated_at` dello snapshot di questo run. Elenca i titoli che meritano un
-avviso:
+dà come `ts` lo stesso istante del `generated_at` dello snapshot di questo run. `stocks.apply_review` scrive una riga
+con `source: "claude"` e la `event_class` per ogni titolo con un evento, con un `ts` successivo. Elenca i titoli che
+meritano un avviso:
 
 ```bash
-uv run python - <<'EOF'
+cd /home/user/Bot-cripto && uv run python - <<'EOF'
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 snap = json.load(open("out/snapshot.json", encoding="utf-8"))
 state = json.load(open("out/state.json", encoding="utf-8"))
 view = json.load(open("out/final.json", encoding="utf-8"))
 run_ts = datetime.fromisoformat(snap["generated_at"])
+journal = state.get("journal", [])
 quiet = {"TIENI", "ATTENDI", "NESSUNA_AZIONE"}
 # (a) azioni nuove: righe del motore scritte da questo refresh (stesso istante dello snapshot)
-for j in state.get("journal", []):
+for j in journal:
     if j["source"] == "engine" and datetime.fromisoformat(j["ts"]) == run_ts and j["action"] not in quiet:
         print(j["ticker"], j["action"], "azione nuova")
-# (b) risultati trimestrali nella revisione applicata (reviews è vuoto se la revisione è stata scartata)
+# (b) risultati trimestrali nella revisione applicata (reviews è vuoto se la revisione è stata scartata),
+#     solo se non già annunciati negli ultimi 4 giorni (riga "claude" uguale, prima di questo run)
 for ticker, r in view.get("reviews", {}).items():
-    if r["event_class"].startswith("trimestrale_"):
-        print(ticker, r["event_class"], "risultati trimestrali")
+    ev = r["event_class"]
+    if not ev.startswith("trimestrale_"):
+        continue
+    seen = any(
+        j["source"] == "claude" and j["ticker"] == ticker and j.get("event_class") == ev
+        and run_ts - timedelta(days=4) <= datetime.fromisoformat(j["ts"]) < run_ts
+        for j in journal
+    )
+    if not seen:
+        print(ticker, ev, "risultati trimestrali")
 EOF
 ```
 
 Usa PushNotification **solo** se l'elenco non è vuoto: (a) un titolo la cui azione è **cambiata in questo run** ed è
-diversa da `TIENI`, `ATTENDI`, `NESSUNA_AZIONE`, oppure (b) risultati trimestrali appena usciti nella revisione
-applicata (`event_class` che inizia con `trimestrale_`). Un'azione che resta uguale da un run all'altro (es. `RIVEDI`
-o `DATI_MANCANTI` per più giorni) non manda un nuovo avviso: resta visibile in pagina. Messaggio in italiano, una o
-due righe, senza numeri inventati, ad esempio: "NVDA: risultati sopra le attese, vedi il piano aggiornato". Se
-l'elenco è vuoto, nessun avviso.
+diversa da `TIENI`, `ATTENDI`, `NESSUNA_AZIONE`, oppure (b) risultati trimestrali nella revisione applicata
+(`event_class` che inizia con `trimestrale_`) non ancora annunciati negli ultimi 4 giorni. Un'azione che resta
+uguale da un run all'altro (es. `RIVEDI` o `DATI_MANCANTI` per più giorni) non manda un nuovo avviso: resta visibile
+in pagina. Messaggio in italiano, una o due righe, senza numeri inventati, ad esempio: "NVDA: risultati sopra le
+attese, vedi il piano aggiornato". Se l'elenco è vuoto, nessun avviso.
 
 ## 9. Messaggio finale
 
@@ -295,4 +325,5 @@ Una riga per ogni titolo dell'elenco della sezione 8 e per ogni titolo con un'az
 - altrimenti il problema preciso (quale passo, quale errore, cosa è rimasto com'era), per esempio "refresh exit 2:
   cambio EUR/USD non disponibile; pagina e stato non modificati".
 
-Aggiungi una riga se la revisione notizie è stata scartata o se qualche proposta è stata rifiutata dal validatore.
+Aggiungi una riga se la revisione notizie è stata scartata o non fatta (anche per WebSearch non disponibile), se
+qualche proposta è stata rifiutata dal validatore o se l'avviso non è stato inviato perché PushNotification mancava.
