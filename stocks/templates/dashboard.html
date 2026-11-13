@@ -5,7 +5,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
 <style>
 /* Layout: una colonna pensata per il telefono; prima lo stato e le azioni (schede con
-   chip di stato), poi le sezioni di consultazione. Nessuno script. */
+   chip di stato), poi le sezioni di consultazione. Un solo script inline, in fondo:
+   età dell'aggiornamento e avviso "dati non aggiornati" calcolati nel browser. */
 :root {
   --bg: #f3f5f8;
   --surface: #ffffff;
@@ -244,3 +245,40 @@ details > ul, details > .stack { font-size: 0.95rem; }
     $footer
   </footer>
 </main>
+
+<script>
+/* Età dell'aggiornamento calcolata nel browser (la pagina resta pubblicata per ore).
+   Nessuna libreria esterna; qualsiasi errore lascia la pagina con la sola data assoluta.
+   Nota: questo file passa da string.Template, quindi qui non va usato il simbolo del dollaro. */
+(function () {
+  try {
+    var el = document.querySelector("[data-generated-at]");
+    if (!el) return;
+    var then = Date.parse(el.getAttribute("data-generated-at"));
+    if (isNaN(then)) return;
+    var minutes = Math.floor((Date.now() - then) / 60000);
+    var hours = Math.floor(minutes / 60);
+    var text;
+    if (minutes < 1) text = "aggiornata adesso";
+    else if (minutes < 60) text = minutes === 1 ? "aggiornata 1 minuto fa" : "aggiornata " + minutes + " minuti fa";
+    else if (hours < 48) text = hours === 1 ? "aggiornata 1 ora fa" : "aggiornata " + hours + " ore fa";
+    else text = "aggiornata " + Math.floor(hours / 24) + " giorni fa";
+    el.textContent = " · " + text;
+    var limit = parseInt(el.getAttribute("data-stale-after-hours"), 10) || 18;
+    if (minutes > limit * 60 && !document.querySelector(".banner[data-stale]")) {
+      var box = document.querySelector(".banners");
+      if (!box) return;
+      var banner = document.createElement("div");
+      banner.className = "banner bad";
+      banner.setAttribute("role", "status");
+      banner.setAttribute("data-stale", "");
+      var title = document.createElement("strong");
+      title.textContent = "Dati non aggiornati: l'ultimo aggiornamento è di più di 18 ore fa.";
+      banner.appendChild(title);
+      box.insertBefore(banner, box.firstChild);
+    }
+  } catch (err) {
+    /* nessun errore visibile: resta la data assoluta */
+  }
+})();
+</script>

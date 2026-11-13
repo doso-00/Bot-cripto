@@ -11,7 +11,11 @@ Regole della pagina:
   notizia viene reso se non inizia con `https://`;
 - ogni numero porta l'etichetta `misurato` (calcolato dal codice sui dati) o `stima`
   (dipende da un'ipotesi: tasse, cambio di oggi, livelli convertiti in euro);
-- formati italiani (virgola decimale, "€" dopo il numero), orari nel fuso Europe/Rome.
+- formati italiani (virgola decimale, "€" dopo il numero), orari nel fuso Europe/Rome;
+- l'età dell'aggiornamento ("aggiornata 3 ore fa") e l'avviso "dati non aggiornati" li
+  calcola uno script nel browser dall'attributo `data-generated-at` (ruling R21): la pagina
+  pubblicata resta la stessa per ore, un'età calcolata qui sarebbe falsa. Senza JavaScript
+  resta la data/ora assoluta.
 """
 
 import argparse
@@ -56,7 +60,11 @@ MODEL_TEXT = (
 )
 TRADE_NOTE = (
     "Per registrare un acquisto o una vendita scrivi a Claude: titolo, quantità, "
-    "prezzo in euro, data."
+    "prezzo in euro, data (procedura in docs/REGISTRARE_OPERAZIONI.md)."
+)
+FRACTIONAL_STOP_NOTE = (
+    "Verifica sull'app che Trade Republic accetti l'ordine stop-loss per la quantità che "
+    "compri (anche frazioni di azione); se non lo accetta, controlla tu il livello qui."
 )
 CLAUDE_PROPOSED = "proposto da Claude, da confermare"
 
@@ -226,23 +234,6 @@ def fmt_dt(ts: datetime) -> str:
     return f"{fmt_date(local.date())} {local:%H:%M}"
 
 
-def fmt_age(then: datetime, now: datetime) -> str:
-    seconds = (_rome(now) - _rome(then)).total_seconds()
-    minutes = int(seconds // 60)
-    if minutes < 1:
-        return "aggiornata adesso"
-    if minutes < 60:
-        return (
-            "aggiornata 1 minuto fa"
-            if minutes == 1
-            else f"aggiornata {minutes} minuti fa"
-        )
-    hours = minutes // 60
-    if hours < 48:
-        return "aggiornata 1 ora fa" if hours == 1 else f"aggiornata {hours} ore fa"
-    return f"aggiornata {hours // 24} giorni fa"
-
-
 # --- Pezzi di HTML -----------------------------------------------------------
 
 
@@ -366,15 +357,19 @@ def _calendar_html(entries: list[_CalendarEntry]) -> str:
 # --- Intestazione e avvisi ---------------------------------------------------
 
 
-def _header(view: FinalView, now: datetime, next_event: _CalendarEntry | None) -> str:
+def _header(view: FinalView, next_event: _CalendarEntry | None) -> str:
     snap = view.snapshot
     data_ok = not snap.issues and all(t.data_ok for t in snap.tickers)
     status_chip = (
         _chip("dati OK", "good") if data_ok else _chip("dati incompleti", "warn")
     )
+    # L'età la scrive lo script della pagina nello span vuoto (R21).
+    generated = _rome(snap.generated_at).isoformat(timespec="seconds")
+    stale_hours = int(STALE_AFTER.total_seconds() // 3600)
     status = (
-        f'<p class="when"><strong>{e(fmt_dt(snap.generated_at))}</strong> (ora italiana) · '
-        f"{e(fmt_age(snap.generated_at, now))}</p>"
+        f'<p class="when"><strong>{e(fmt_dt(snap.generated_at))}</strong> (ora italiana)'
+        f'<span id="age" data-generated-at="{e(generated)}" '
+        f'data-stale-after-hours="{stale_hours}"></span></p>'
         f'<p class="status">{status_chip}'
         f"{_chip(_SLOT_LABEL.get(snap.run_slot, snap.run_slot), soft=True)}</p>"
     )
@@ -405,13 +400,15 @@ def _banners(view: FinalView, now: datetime, s: StocksSettings) -> str:
     snap = view.snapshot
     out: list[str] = []
     if _rome(now) - _rome(snap.generated_at) > STALE_AFTER:
+        # Vista già vecchia quando la pagina viene scritta; `data-stale` evita che lo
+        # script ne aggiunga un secondo.
         out.append(
             _banner(
                 "bad",
                 "Dati non aggiornati",
                 f"<p>L'ultimo aggiornamento è di {e(fmt_dt(snap.generated_at))}: prezzi e "
                 "segnali potrebbero non valere più. Non decidere su questi numeri.</p>",
-            )
+            ).replace('class="banner bad"', 'class="banner bad" data-stale', 1)
         )
     missing = [t.ticker for t in snap.tickers if not t.data_ok]
     if missing:
@@ -508,6 +505,8 @@ def _plan_html(plan: Plan, t: TickerSnapshot, eurusd: float, title: str) -> str:
             "si controllano su questa pagina.</p>"
         )
     parts.append(_ul(plan.scenarios))
+    if stop_kind and _finite(plan.stop_eur):
+        parts.append(f'<p class="small muted">{e(FRACTIONAL_STOP_NOTE)}</p>')
     return f'<div class="plan">{"".join(parts)}</div>'
 
 
@@ -717,13 +716,21 @@ def _portfolio(view: FinalView, state: State, s: StocksSettings) -> str:
     snap = view.snapshot
     p = snap.portfolio
     held = [t for t in snap.tickers if t.holding is not None]
-    label = "misurato" if all(t.holding.currency == "EUR" for t in held) else "stima"
+    # Investito: misurato se tutti i prezzi di carico sono in euro. Valore: misurato solo se
+    # anche i titoli sono quotati in euro (altrimenti usa il cambio di oggi). Liquidità:
+    # sempre stima (operazioni in USD al cambio di oggi, commissioni ipotizzate).
+    invested_label = "misurato" if all(t.holding.currency == "EUR" for t in held) else "stima"
+    value_label = (
+        "misurato"
+        if all(t.holding.currency == "EUR" and t.currency == "EUR" for t in held)
+        else "stima"
+    )
     pnl_css = "up" if p.pnl_net_eur > 0 else "down" if p.pnl_net_eur < 0 else ""
     totals = [
         ("Netto stimato", _val(fmt_eur(p.pnl_net_eur, signed=True), "stima", pnl_css)),
-        ("Valore posizioni", _val(fmt_eur(p.value_eur), label)),
-        ("Investito", _val(fmt_eur(p.invested_eur), label)),
-        ("Liquidità", _val(fmt_eur(p.cash_eur), label)),
+        ("Valore posizioni", _val(fmt_eur(p.value_eur), value_label)),
+        ("Investito", _val(fmt_eur(p.invested_eur), invested_label)),
+        ("Liquidità", _val(fmt_eur(p.cash_eur), "stima")),
     ]
     rows = "".join(f"<div><dt>{e(k)}</dt><dd>{v}</dd></div>" for k, v in totals)
     parts = [f'<dl class="totals">{rows}</dl>']
@@ -874,7 +881,7 @@ def render_html(
     todo_count, todo = _todo(view)
     template = Template(TEMPLATE_PATH.read_text(encoding="utf-8"))
     return template.substitute(
-        header=_header(view, now, next_event),
+        header=_header(view, next_event),
         banners=_banners(view, now, settings),
         todo_count=todo_count,
         todo=todo,

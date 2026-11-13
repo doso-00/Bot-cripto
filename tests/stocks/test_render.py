@@ -1,5 +1,6 @@
 """Test della pagina HTML (stocks.render). Nessuna rete: viste costruite a mano."""
 
+import html as html_lib
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from stocks.models import (
     Action,
     EarningsInfo,
     Fundamentals,
+    Holding,
     Plan,
     PortfolioSummary,
     PositionKind,
@@ -155,7 +157,9 @@ def test_claude_text_is_escaped():
     )
     html = render(view, State(revisions=[rejected]))
     assert "&lt;script&gt;" in html
-    assert "<script" not in html
+    # l'unico script è quello della pagina (età dell'aggiornamento), mai il testo di Claude
+    assert html.count("<script") == 1
+    assert "<script>alert(1)" not in html
 
 
 def test_non_https_links_dropped():
@@ -236,12 +240,27 @@ def test_times_shown_in_rome_tz():
     assert "17/11/2026" in html and "22:00" in html
 
 
+def _without_scripts(html: str) -> str:
+    return re.sub(r"<script>.*?</script>", "", html, flags=re.DOTALL)
+
+
 def test_age_and_stale_banner():
+    """R21: l'età la calcola il browser; lato server solo la data assoluta."""
     fresh = render(make_view(generated_at=NOW - timedelta(hours=3)))
-    assert "aggiornata 3 ore fa" in fresh
-    assert "Dati non aggiornati" not in fresh
+    assert 'data-generated-at="2026-11-12T20:10:00+01:00"' in fresh
+    assert 'data-stale-after-hours="18"' in fresh
+    script = re.search(r"<script>(.*?)</script>", fresh, flags=re.DOTALL).group(1)
+    assert "try {" in script and "catch" in script
+    assert "Dati non aggiornati: l'ultimo aggiornamento è di più di 18 ore fa." in script
+    assert "src=" not in fresh.split("<script>")[1].split(">")[0]  # nessuna libreria esterna
+    static = _without_scripts(fresh)
+    assert "12/11/2026 20:10" in static
+    for text in ("minuti fa", "minuto fa", "ore fa", "adesso"):
+        assert text not in static
+    assert "Dati non aggiornati" not in static
+    # una pagina generata da una vista già vecchia ha anche l'avviso statico
     stale = render(make_view(generated_at=NOW - timedelta(hours=19)))
-    assert "Dati non aggiornati" in stale
+    assert "Dati non aggiornati" in _without_scripts(stale)
 
 
 def test_blocked_buy_shows_reason_first_and_is_not_a_buy():
@@ -306,3 +325,58 @@ def test_none_and_zero_values_do_not_crash(value):
         rsi14=value,
     )
     assert DISCLAIMER in render(make_view(t))
+
+
+def held_eur_on_usd(stop_plan: bool = False) -> TickerSnapshot:
+    plan = opportunity_plan() if stop_plan else None
+    return make_ticker(
+        "NVDA",
+        Action.TIENI,
+        holding=Holding(
+            ticker="NVDA", kind=PositionKind.opportunity, qty=1.3, avg_price=120.0, currency="EUR"
+        ),
+        signal=Signal(action=Action.TIENI, kind=PositionKind.opportunity, plan=plan),
+    )
+
+
+def _total_label(html: str, name: str) -> str:
+    m = re.search(rf"<dt>{name}</dt><dd>.*?<span class=\"tag\">(\w+)</span></dd>", html)
+    return m.group(1)
+
+
+def test_cash_and_converted_values_are_estimates():
+    html = render(make_view(held_eur_on_usd()))
+    assert _total_label(html, "Liquidità") == "stima"
+    # posizione in EUR su un titolo in USD: il valore usa il cambio di oggi
+    assert _total_label(html, "Valore posizioni") == "stima"
+    assert _total_label(html, "Investito") == "misurato"
+    assert _total_label(render(make_view()), "Liquidità") == "stima"
+
+
+def test_fractional_stop_note_under_stop_plans():
+    note = (
+        "Verifica sull'app che Trade Republic accetti l'ordine stop-loss per la quantità che "
+        "compri (anche frazioni di azione); se non lo accetta, controlla tu il livello qui."
+    )
+    buy = make_ticker(
+        "NVDA",
+        Action.COMPRA,
+        signal=Signal(
+            action=Action.COMPRA,
+            kind=PositionKind.opportunity,
+            amount_eur=100.0,
+            plan=opportunity_plan(76.0),
+            reasons=["occasione"],
+        ),
+    )
+    assert html_lib.escape(note, quote=True) in render(make_view(buy))
+    wait = make_ticker(
+        "AAA",
+        Action.ATTENDI,
+        signal=Signal(
+            action=Action.ATTENDI,
+            kind=PositionKind.event,
+            plan=Plan(kind=PositionKind.event, entry_ref=100.0, currency="USD"),
+        ),
+    )
+    assert html_lib.escape(note, quote=True) not in render(make_view(wait))
