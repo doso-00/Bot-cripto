@@ -254,29 +254,42 @@ successivo, le operazioni di Riccardo restano nel documento.
 
 ## 8. Avviso sul telefono
 
-Elenca i titoli che meritano un avviso:
+L'avviso serve solo per le **novità**, non per ripetere a ogni run la stessa azione. `stocks.refresh` scrive nel
+registro (`journal` dello stato) una riga con `source: "engine"` solo quando l'azione di un titolo **cambia**, e le
+dà come `ts` lo stesso istante del `generated_at` dello snapshot di questo run. Elenca i titoli che meritano un
+avviso:
 
 ```bash
 uv run python - <<'EOF'
 import json
-v = json.load(open("out/final.json", encoding="utf-8"))
+from datetime import datetime
+snap = json.load(open("out/snapshot.json", encoding="utf-8"))
+state = json.load(open("out/state.json", encoding="utf-8"))
+view = json.load(open("out/final.json", encoding="utf-8"))
+run_ts = datetime.fromisoformat(snap["generated_at"])
 quiet = {"TIENI", "ATTENDI", "NESSUNA_AZIONE"}
-for t in v["snapshot"]["tickers"]:
-    action = t["signal"]["action"]
-    event = v["reviews"].get(t["ticker"], {}).get("event_class", "nessuno")
-    if action not in quiet or event.startswith("trimestrale_"):
-        print(t["ticker"], action, event)
+# (a) azioni nuove: righe del motore scritte da questo refresh (stesso istante dello snapshot)
+for j in state.get("journal", []):
+    if j["source"] == "engine" and datetime.fromisoformat(j["ts"]) == run_ts and j["action"] not in quiet:
+        print(j["ticker"], j["action"], "azione nuova")
+# (b) risultati trimestrali nella revisione applicata (reviews è vuoto se la revisione è stata scartata)
+for ticker, r in view.get("reviews", {}).items():
+    if r["event_class"].startswith("trimestrale_"):
+        print(ticker, r["event_class"], "risultati trimestrali")
 EOF
 ```
 
-Usa PushNotification **solo** se l'elenco non è vuoto: almeno un titolo con un'azione diversa da `TIENI`, `ATTENDI`,
-`NESSUNA_AZIONE`, oppure risultati trimestrali appena usciti (`event_class` che inizia con `trimestrale_`). Messaggio
-in italiano, una o due righe, senza numeri inventati, ad esempio: "NVDA: risultati sopra le attese, vedi il piano
-aggiornato". Se l'elenco è vuoto, nessun avviso.
+Usa PushNotification **solo** se l'elenco non è vuoto: (a) un titolo la cui azione è **cambiata in questo run** ed è
+diversa da `TIENI`, `ATTENDI`, `NESSUNA_AZIONE`, oppure (b) risultati trimestrali appena usciti nella revisione
+applicata (`event_class` che inizia con `trimestrale_`). Un'azione che resta uguale da un run all'altro (es. `RIVEDI`
+o `DATI_MANCANTI` per più giorni) non manda un nuovo avviso: resta visibile in pagina. Messaggio in italiano, una o
+due righe, senza numeri inventati, ad esempio: "NVDA: risultati sopra le attese, vedi il piano aggiornato". Se
+l'elenco è vuoto, nessun avviso.
 
 ## 9. Messaggio finale
 
-Una riga per ogni titolo dell'elenco della sezione 8 (ticker, azione, motivo in poche parole), poi:
+Una riga per ogni titolo dell'elenco della sezione 8 e per ogni titolo con un'azione diversa da `TIENI`, `ATTENDI`,
+`NESSUNA_AZIONE` anche se non è nuova (ticker, azione, motivo in poche parole), poi:
 
 - `pagina aggiornata, stato salvato` se tutto è andato bene;
 - altrimenti il problema preciso (quale passo, quale errore, cosa è rimasto com'era), per esempio "refresh exit 2:
