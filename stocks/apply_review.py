@@ -24,7 +24,13 @@ from pydantic import BaseModel, ValidationError
 from stocks.data import to_eur
 from stocks.models import Action, Plan, Snapshot, TickerSnapshot
 from stocks.review import ClaudeReview, GlossaryItem, Proposal, TickerReview
-from stocks.signals import _round_eur, opportunity_scenarios
+from stocks.signals import (
+    NEW_BUY_STOP_PREFIX,
+    STOP_LINE_PREFIXES,
+    _round_eur,
+    is_standard_scenario,
+    opportunity_scenarios,
+)
 from stocks.state import JournalEntry, PlanRevision, State, load_state, save_state
 
 logger = logging.getLogger("stocks.apply_review")
@@ -103,15 +109,21 @@ def _tightened(plan: Plan, new_stop: float, eurusd: float) -> Plan:
     except ValueError:  # valuta non supportata: si tiene il valore precedente
         pass
     return _with_fresh_scenarios(
-        plan.model_copy(update={"stop": new_stop, "stop_eur": stop_eur})
+        plan.model_copy(update={"stop": new_stop, "stop_eur": stop_eur}),
+        previous_stop_eur=plan.stop_eur,
     )
 
 
-def _with_fresh_scenarios(plan: Plan) -> Plan:
+def _with_fresh_scenarios(plan: Plan, previous_stop_eur: float | None = None) -> Plan:
     """Rigenera i testi degli scenari dopo una modifica di stop o scadenza.
 
     Solo per i piani con stop, obiettivo e scadenza (occasione/evento); gli altri non hanno
-    testi che citano questi livelli.
+    testi che citano questi livelli. I piani modificati qui sono sempre di posizioni già
+    aperte (R12): l'ordine stop-loss è già su Trade Republic, quindi la riga dello stop dice
+    di spostarlo da `previous_stop_eur` al nuovo livello (stop alzato). Se lo stop non
+    cambia (`previous_stop_eur` None: modifica della data limite) la riga dello stop resta
+    quella di prima, salvo il vecchio testo "subito dopo l'acquisto", che diventa "lascia
+    l'ordine a X €". Le righe non standard (es. prezzo di carico convertito) restano in coda.
     """
     if None in (plan.stop, plan.stop_eur, plan.target, plan.target_eur, plan.deadline):
         return plan
@@ -122,8 +134,19 @@ def _with_fresh_scenarios(plan: Plan) -> Plan:
         plan.target_eur,
         plan.deadline,
         plan.currency,
+        previous_stop_eur=plan.stop_eur if previous_stop_eur is None else previous_stop_eur,
     )
-    return plan.model_copy(update={"scenarios": scenarios})
+    if previous_stop_eur is None:
+        kept = [
+            line
+            for line in plan.scenarios
+            if line.startswith(STOP_LINE_PREFIXES)
+            and not line.startswith(NEW_BUY_STOP_PREFIX)
+        ]
+        if kept:
+            scenarios[0] = kept[0]
+    extras = [line for line in plan.scenarios if not is_standard_scenario(line)]
+    return plan.model_copy(update={"scenarios": [*scenarios, *extras]})
 
 
 def _commit_plan(state: State, ticker: TickerSnapshot, plan: Plan) -> None:
@@ -175,6 +198,10 @@ def _evaluate(
         old = signal.action.value
         signal.action = Action.RIVEDI
         signal.amount_eur = None
+        signal.reasons = [
+            *signal.reasons,
+            f"Revisione richiesta dalla lettura delle notizie: {proposal.reason}",
+        ]
         return "action", old, signal.action.value
 
     if kind == "tighten_stop":

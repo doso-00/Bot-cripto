@@ -21,6 +21,7 @@ from stocks.models import (
     TickerSnapshot,
 )
 from stocks.review import ClaudeReview, Proposal, TickerReview
+from stocks.signals import CONVERTED_ENTRY_REASON, open_position_stop_line, opportunity_scenarios
 from stocks.state import State, load_state, save_state
 
 ROME = ZoneInfo("Europe/Rome")
@@ -261,9 +262,14 @@ def test_extend_deadline_rejected_when_not_later():
 
 def test_request_review_sets_rivedi():
     snap, state = held_setup()
-    view = apply(snap, review_for("AAA", prop("request_review")), state, NOW)
+    view = apply(
+        snap, review_for("AAA", prop("request_review", reason="causa legale aperta")), state, NOW
+    )
     assert view.snapshot.tickers[0].signal.action == Action.RIVEDI
     assert view.applied[0].field == "action"
+    assert view.snapshot.tickers[0].signal.reasons[-1] == (
+        "Revisione richiesta dalla lettura delle notizie: causa legale aperta"
+    )
 
 
 def test_request_review_rejected_without_position():
@@ -456,14 +462,15 @@ def test_tighten_stop_keeps_existing_eur_stop_when_close_eur_missing():
 
 def test_scenarios_updated_after_tighten_and_shorten():
     snap, state = held_setup()
-    state.plans["AAA"].scenarios = ["vecchio"]
+    state.plans["AAA"].scenarios = opportunity_scenarios(90.0, 76.0, 120.0, 100.0, DEADLINE, "USD")
     review = review_for(
         "AAA", prop("tighten_stop", "95.5"), prop("shorten_deadline", "2026-11-30")
     )
     view = apply(snap, review, state, NOW)
     text = " ".join(state.plans["AAA"].scenarios)
     assert "76,4" in text.replace(".", ",") and "30/11/2026" in text
-    assert "vecchio" not in text and "10/12/2026" not in text
+    assert "Subito dopo l'acquisto" not in text and "10/12/2026" not in text
+    assert len(state.plans["AAA"].scenarios) == 3
     assert (
         view.snapshot.tickers[0].signal.plan.scenarios == state.plans["AAA"].scenarios
     )
@@ -559,3 +566,46 @@ def test_journal_close_is_none_when_close_missing():
     state = State()
     apply(snap, review_for("AAA", event_class="legale"), state, NOW)
     assert state.journal[0].close is None
+
+
+def test_scenarios_move_order_for_open_position():
+    """I4a: per una posizione aperta lo stop alzato si sposta, non si "inserisce dopo l'acquisto"."""
+    snap, state = held_setup()
+    state.plans["AAA"].scenarios = [open_position_stop_line(76.0)]
+    apply(snap, review_for("AAA", prop("tighten_stop", "95.5")), state, NOW)
+    first = state.plans["AAA"].scenarios[0]
+    # 95,5 USD / 1,25 = 76,40 € (per difetto)
+    assert first.startswith("Sposta il tuo ordine stop-loss su Trade Republic da 76,00 € a 76,40 €")
+    assert not any("Subito dopo l'acquisto" in x for x in state.plans["AAA"].scenarios)
+
+    # una data limite più vicina non tocca lo stop: la riga dello stop resta quella di prima
+    later = NOW + timedelta(hours=12)
+    review = review_for("AAA", prop("shorten_deadline", "2026-11-30")).model_copy(
+        update={"generated_at": later - timedelta(hours=1)}
+    )
+    apply(snap, review, state, later)
+    assert state.plans["AAA"].scenarios[0] == first
+
+    # piano vecchio con il testo per un nuovo acquisto: rigenerato come "lascia l'ordine"
+    snap, state = held_setup()
+    state.plans["AAA"].scenarios = opportunity_scenarios(90.0, 76.0, 120.0, 100.0, DEADLINE, "USD")
+    apply(snap, review_for("AAA", prop("shorten_deadline", "2026-11-30")), state, NOW)
+    assert state.plans["AAA"].scenarios[0].startswith(
+        "Lascia il tuo ordine stop-loss su Trade Republic a 76,00 €"
+    )
+
+
+def test_fresh_scenarios_keep_extra_notes():
+    snap, state = held_setup()
+    state.plans["AAA"].scenarios = [
+        *opportunity_scenarios(90.0, 76.0, 120.0, 100.0, DEADLINE, "USD"),
+        CONVERTED_ENTRY_REASON,
+    ]
+    review = review_for("AAA", prop("extend_deadline", "2026-12-20", kind="evento"))
+    view = apply(snap, review, state, NOW)
+    scenarios = state.plans["AAA"].scenarios
+    assert scenarios.count(CONVERTED_ENTRY_REASON) == 1
+    assert scenarios[-1] == CONVERTED_ENTRY_REASON
+    assert any("20/12/2026" in x for x in scenarios)
+    assert not any("10/12/2026" in x for x in scenarios)
+    assert view.snapshot.tickers[0].signal.plan.scenarios == scenarios
