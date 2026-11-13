@@ -14,7 +14,8 @@ import pandas as pd
 from stocks.config import StocksSettings
 from stocks.costs import round_trip_fees
 from stocks.data import to_eur
-from stocks.indicators import atr, drawdown_from_high, rsi, sma
+from stocks.earnings import AFTER_CLOSE_HOUR
+from stocks.indicators import atr, drawdown_from_high, rsi, sma, trend_closes
 from stocks.models import (
     Action,
     EarningsInfo,
@@ -41,6 +42,10 @@ STALE_EVENT_REASON = (
     "Risultati della trimestrale non ancora riportati dalla fonte dati."
 )
 
+REACTION_PENDING_REASON = (
+    "Risultati della trimestrale usciti: si aspetta la prima chiusura dopo i risultati "
+    "prima di proporre un acquisto."
+)
 CURRENCY_MISMATCH_REASON = "Valuta della posizione diversa da quella del titolo."
 CONVERTED_ENTRY_REASON = (
     "Prezzo di carico convertito in dollari al cambio di oggi (approssimazione)."
@@ -369,6 +374,60 @@ def _wait_for_earnings(e: EarningsInfo, close: float, currency: str) -> Signal:
     )
 
 
+def _reaction_date(e: EarningsInfo) -> date | None:
+    """Giorno di borsa in cui il prezzo reagisce all'ultima trimestrale riportata.
+
+    Dopo la chiusura: il primo giorno feriale dopo la data (festività non gestite);
+    prima dell'apertura: la data stessa. None se non c'è una trimestrale riportata.
+    """
+    if e.last_ts is None:
+        return None
+    day = e.last_ts.date()
+    after_close = (
+        e.last_after_close
+        if e.last_after_close is not None
+        else e.last_ts.hour >= AFTER_CLOSE_HOUR
+    )
+    if not after_close:
+        return day
+    day += timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day
+
+
+def _reaction_pending(e: EarningsInfo, prices: pd.DataFrame) -> bool:
+    """Regola 4b: trimestrale riportata ma la barra di reazione non è ancora nei prezzi.
+
+    `prices` contiene già solo barre chiuse con data <= asof.
+    """
+    reaction = _reaction_date(e)
+    return reaction is not None and not any(d >= reaction for d in prices.index)
+
+
+def _wait_for_reaction(close: float, currency: str) -> Signal:
+    """Regola 4b: risultati usciti, nessun acquisto prima della prima chiusura dopo i risultati."""
+    plan = Plan(
+        kind=PositionKind.event,
+        entry_ref=close,
+        currency=currency,
+        scenarios=[
+            (
+                "Dopo la prima chiusura successiva ai risultati il motore rivaluta il titolo e "
+                "può proporre un acquisto, sempre con stop e obiettivo scritti prima di comprare."
+            )
+        ],
+        # Nessun livello da inserire: prima della reazione del prezzo non si compra.
+        stop_order_on_tr=False,
+    )
+    return Signal(
+        action=Action.ATTENDI,
+        kind=PositionKind.event,
+        plan=plan,
+        reasons=[REACTION_PENDING_REASON],
+    )
+
+
 # --- Posizioni aperte --------------------------------------------------------
 
 
@@ -541,8 +600,12 @@ def _evaluate_entry(
     eurusd: float,
     s: StocksSettings,
 ) -> Signal:
-    """Regole 5 (ingresso base), 6 (occasione) e 7 (nessuna azione)."""
-    closes = prices["close"]
+    """Regole 5 (ingresso base), 6 (occasione) e 7 (nessuna azione).
+
+    Media a 200 giorni, ritracciamento e RSI sulle chiusure aggiustate (`trend_closes`,
+    ruling R25); ATR, livelli del piano e prezzi mostrati sul close grezzo.
+    """
+    closes = trend_closes(prices)
     sma200 = float(sma(closes, SMA_WINDOW).iloc[-1])
     dd = float(drawdown_from_high(closes, HIGH_WINDOW).iloc[-1])
     rsi14 = float(rsi(closes, RSI_WINDOW).iloc[-1])
@@ -655,7 +718,8 @@ def evaluate(
 
     1. dati assenti o vecchi -> DATI_MANCANTI; 2. base posseduta: soglie dal prezzo medio;
     3. occasione/evento posseduto: stop, obiettivo, scadenza; 4. trimestrale imminente
-    -> ATTENDI; 5. ingresso base; 6. occasione; 7. NESSUNA_AZIONE.
+    -> ATTENDI; 4b. risultati usciti ma barra di reazione non ancora nei prezzi -> ATTENDI
+    (ruling R19); 5. ingresso base; 6. occasione; 7. NESSUNA_AZIONE.
     Poi gli acquisti passano dal blocco del portafoglio e dai limiti di importo.
     `prices`: indice `datetime.date`, colonne open/high/low/close, nella valuta di
     quotazione `f.currency`. Una posizione può essere nella stessa valuta o in EUR su un
@@ -710,6 +774,9 @@ def evaluate(
     # Regola 4: trimestrale imminente, nessun acquisto prima dei risultati
     elif _earnings_soon(e, s):
         return _wait_for_earnings(e, close, currency)
+    # Regola 4b: risultati appena usciti, si aspetta la reazione del prezzo
+    elif _reaction_pending(e, prices):
+        sig = _wait_for_reaction(close, currency)
     # Regole 5-7, poi blocchi e importi
     else:
         sig = _evaluate_entry(

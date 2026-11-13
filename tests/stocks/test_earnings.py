@@ -166,3 +166,26 @@ def test_fetch_earnings_failure_returns_empty(monkeypatch):
     monkeypatch.setattr("stocks.earnings.with_retry", lambda fn: fn())
     client = FakeYF({"X": FakeTicker(earnings_error=ValueError("no earnings"))})
     assert fetch_earnings("X", client=client).empty
+
+
+def test_unreported_event_kept_for_four_days():
+    """R20: senza EPS l'evento resta "prossimo" fino a 4 giorni dopo la sua data (finestra −3 di R10)."""
+    df = edf(
+        [("2026-11-17 16:00", 1.0, None, None), ("2026-08-27 16:00", 0.9, 1.0, 11.0)]
+    )
+    for day, expected in ((19, -2), (20, -3), (21, -4)):
+        info = earnings_info(df, prices({}), datetime(2026, 11, day, 23, 0, tzinfo=ROME))
+        assert info.next_ts.date() == date(2026, 11, 17)
+        assert info.days_to_next == expected
+    # dal quinto giorno l'evento non è più il prossimo
+    later = earnings_info(df, prices({}), datetime(2026, 11, 22, 9, 0, tzinfo=ROME))
+    assert later.next_ts is None and later.days_to_next is None
+
+
+def test_last_after_close_flag():
+    after = edf([("2026-11-17 16:00", 1.0, 1.1, 8.5)])
+    pre = edf([("2026-11-17 08:00", 1.0, 1.1, 8.5)])
+    now = datetime(2026, 11, 18, 7, 0, tzinfo=ROME)
+    assert earnings_info(after, prices({}), now).last_after_close is True
+    assert earnings_info(pre, prices({}), now).last_after_close is False
+    assert earnings_info(edf([("2026-11-30 16:00", 1.0, None, None)]), prices({}), now).last_after_close is None

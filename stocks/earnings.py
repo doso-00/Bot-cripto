@@ -24,6 +24,10 @@ MAX_PAST_MOVES = 8
 AFTER_CLOSE_HOUR = 16
 # Finestra in cui una pubblicazione è "uscita dall'ultimo run"
 RECENT_REPORT_HOURS = 36
+# Giorni dopo la data in cui un evento senza utile riportato resta "il prossimo"
+# (ruling R20): copre la finestra di 3 giorni del motore regole (R10) e il giorno dopo,
+# in cui il motore lo segnala come scaduto.
+UNREPORTED_KEEP_DAYS = 4
 
 _RENAME = {
     "EPS Estimate": "eps_estimate",
@@ -83,17 +87,22 @@ def earnings_info(
 ) -> EarningsInfo:
     """Sintesi trimestrali: prossimo evento, ultima uscita e movimenti storici.
 
-    Il prossimo evento è il primo (in ordine di data) senza `eps_reported` e con
-    `ts` >= adesso - 1 giorno: un evento con data passata ma utile non ancora
-    pubblicato resta il prossimo (la sera della trimestrale, prima che Yahoo
-    aggiorni l'EPS reale). `prices` ha indice `date` e colonna `close`.
+    Il prossimo evento è il primo (in ordine di data) senza `eps_reported` e con data
+    al massimo `UNREPORTED_KEEP_DAYS` giorni fa (nel fuso dell'evento): un evento con
+    data passata ma utile non ancora pubblicato resta il prossimo (la sera della
+    trimestrale, prima che Yahoo aggiorni l'EPS reale, o se Yahoo tarda qualche giorno).
+    `prices` ha indice `date` e colonna `close`.
     `expected_move_pct` resta None: lo imposta il chiamante (serve la rete).
     """
     if edf is None or edf.empty:
         return EarningsInfo()
     df = edf.sort_values("ts").reset_index(drop=True)
     reported = df[df["eps_reported"].notna()]
-    pending = df[df["eps_reported"].isna() & (df["ts"] >= asof_now - timedelta(days=1))]
+    recent_enough = [
+        (ts.date() - asof_now.astimezone(ts.tzinfo).date()).days >= -UNREPORTED_KEEP_DAYS
+        for ts in df["ts"]
+    ]
+    pending = df[df["eps_reported"].isna() & pd.Series(recent_enough, index=df.index)]
 
     next_ts = days_to_next = None
     if not pending.empty:
@@ -102,11 +111,12 @@ def earnings_info(
             next_ts.date() - asof_now.astimezone(next_ts.tzinfo).date()
         ).days
 
-    last_ts = last_surprise = None
+    last_ts = last_surprise = last_after_close = None
     recent = False
     if not reported.empty:
         last = reported.iloc[-1]
         last_ts = last["ts"].to_pydatetime()
+        last_after_close = last_ts.hour >= AFTER_CLOSE_HOUR
         last_surprise = (
             None if pd.isna(last["surprise_pct"]) else float(last["surprise_pct"])
         )
@@ -128,6 +138,7 @@ def earnings_info(
         days_to_next=days_to_next,
         reported_since_last_run=recent,
         last_ts=last_ts,
+        last_after_close=last_after_close,
         last_surprise_pct=last_surprise,
         past_moves_pct=moves,
         avg_abs_move_pct=avg_abs,

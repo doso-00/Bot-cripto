@@ -435,3 +435,19 @@ def test_exit_code_0_when_some_tickers_fail(tmp_path):
     snap = Snapshot.model_validate_json((tmp_path / "out" / "snapshot.json").read_text())
     assert by_ticker(snap)["NVDA"].data_ok is True
     assert snap.issues  # gli altri titoli della watchlist non hanno dati
+
+
+def test_indicators_use_adjusted_closes(tmp_path, s):
+    """R25: ritracciamento e massimo a 63 giorni sulle chiusure aggiustate, prezzo sul close grezzo."""
+    closes = rising() + [93.0, 93.2, 93.4]  # stacco del dividendo del 7%
+    hist = history(closes)
+    hist["Adj Close"] = [c * 0.93 for c in rising()] + [93.0, 93.2, 93.4]
+    ko = FakeTicker(history=hist, info=GOOD_INFO)
+
+    snap = run(tmp_path, s, client(KO=ko), wl=watchlist("KO"))
+
+    t = by_ticker(snap)["KO"]
+    assert t.close == pytest.approx(93.4)
+    assert t.drawdown_63d_pct == pytest.approx(0.0)
+    assert t.high_63d == pytest.approx(93.4)
+    assert t.signal.action == Action.NESSUNA_AZIONE

@@ -71,12 +71,16 @@ class EarningsInfo(BaseModel):
     la dà Yahoo (5.2 = +5,2%). `past_moves_pct` è dal più recente al più vecchio.
     `expected_move_pct` lo calcola `stocks.earnings.expected_move_pct` (serve la
     rete): `earnings_info` lo lascia None e lo imposta il chiamante.
+    `last_after_close`: True se l'ultima trimestrale riportata è uscita dopo la chiusura
+    (reazione del prezzo il giorno di borsa dopo), False se prima dell'apertura
+    (reazione lo stesso giorno), None se non c'è una trimestrale riportata.
     """
 
     next_ts: datetime | None = None
     days_to_next: int | None = None
     reported_since_last_run: bool = False
     last_ts: datetime | None = None
+    last_after_close: bool | None = None
     last_surprise_pct: float | None = None
     past_moves_pct: list[float] = []
     avg_abs_move_pct: float | None = None

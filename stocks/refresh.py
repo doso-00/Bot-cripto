@@ -39,7 +39,7 @@ from stocks.data import (
     to_eur,
 )
 from stocks.earnings import earnings_info, expected_move_pct, fetch_earnings
-from stocks.indicators import atr, drawdown_from_high, rsi, sma
+from stocks.indicators import atr, drawdown_from_high, rsi, sma, trend_closes
 from stocks.models import (
     Action,
     EarningsInfo,
@@ -423,15 +423,17 @@ def _last(series: pd.Series) -> float | None:
 
 
 def _indicators(prices: pd.DataFrame) -> dict:
+    """Indicatori mostrati: tendenza sulle chiusure aggiustate (R25), prezzo e ATR sul grezzo."""
     closes = prices["close"]
+    trend = trend_closes(prices)
     return {
         "close": float(closes.iloc[-1]),
         "change_1d_pct": float(closes.iloc[-1] / closes.iloc[-2] - 1) if len(closes) >= 2 else None,
-        "sma200": _last(sma(closes, SMA_WINDOW)),
+        "sma200": _last(sma(trend, SMA_WINDOW)),
         "atr14": _last(atr(prices, ATR_WINDOW)),
-        "rsi14": _last(rsi(closes, RSI_WINDOW)),
-        "drawdown_63d_pct": _last(drawdown_from_high(closes, HIGH_WINDOW)),
-        "high_63d": float(closes.iloc[-HIGH_WINDOW:].max()),
+        "rsi14": _last(rsi(trend, RSI_WINDOW)),
+        "drawdown_63d_pct": _last(drawdown_from_high(trend, HIGH_WINDOW)),
+        "high_63d": float(trend.iloc[-HIGH_WINDOW:].max()),
     }
 
 

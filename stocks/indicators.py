@@ -57,3 +57,20 @@ def drawdown_from_high(close: pd.Series, window: int = 63) -> pd.Series:
     """Distanza dal massimo degli ultimi `window` giorni (>= 0; 0.12 = -12%)."""
     high = close.rolling(window, min_periods=1).max()
     return 1.0 - close / high
+
+
+def trend_closes(prices: pd.DataFrame) -> pd.Series:
+    """Chiusure per gli indicatori di tendenza (SMA200, massimo/ritracciamento, RSI).
+
+    Usa `adj_close` (aggiustato per dividendi e frazionamenti, ruling R25) riportato alla
+    scala del close grezzo dell'ultima barra: lo stacco di un dividendo non sembra un calo
+    e la media resta confrontabile con il prezzo di oggi. Se `adj_close` manca o ha
+    valori non utilizzabili si usa il close grezzo.
+    """
+    close = prices["close"]
+    if "adj_close" not in prices.columns or close.empty:
+        return close
+    adj = prices["adj_close"]
+    if adj.isna().any() or not (adj > 0).all():
+        return close
+    return adj * (float(close.iloc[-1]) / float(adj.iloc[-1]))

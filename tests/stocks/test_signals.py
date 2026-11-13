@@ -1,12 +1,14 @@
 """Test del motore delle regole: un test per regola più i blocchi e i piani."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from stocks.config import StocksSettings
 from stocks.models import (
     Action,
+    EarningsInfo,
     Fundamentals,
     Holding,
     Plan,
@@ -198,6 +200,17 @@ def test_rule3_event_holding_uses_same_rule(s):
     assert sig.action == A.VENDI
 
 
+def test_rule3_plan_none_is_rivedi(s):
+    holding = Holding(
+        ticker="XYZ", kind=K.opportunity, qty=2, avg_price=100.0, currency="USD"
+    )
+    sig = run(make_prices(rising(240, 90.0, 110.0)), s, holding=holding, plan=None)
+    assert sig.action == A.RIVEDI
+    assert sig.kind == K.opportunity
+    assert sig.plan is None
+    assert "Manca il piano di uscita" in sig.reasons[0]
+
+
 # --- Regola 4 ----------------------------------------------------------------
 
 
@@ -268,6 +281,62 @@ def test_event_plan_has_two_scenarios(s):
         assert "non disponibil" in text
 
 
+# --- Regola 4b: risultati usciti, barra di reazione non ancora nei prezzi -----
+
+NY = ZoneInfo("America/New_York")
+REACTION_REASON = (
+    "Risultati della trimestrale usciti: si aspetta la prima chiusura dopo i risultati "
+    "prima di proporre un acquisto."
+)
+
+
+def reported(ts: datetime, after_close: bool) -> EarningsInfo:
+    return EarningsInfo(
+        last_ts=ts, last_after_close=after_close, last_surprise_pct=8.5,
+        reported_since_last_run=True,
+    )
+
+
+def test_attendi_until_reaction_bar_after_close(s):
+    # NVDA: risultati il 17/11 alle 16:00 di New York; run del 18/11 alle 06:52 di Roma
+    # (00:52 a New York): l'ultima barra chiusa è quella del 17/11, la reazione è il 18/11.
+    e = reported(datetime(2026, 11, 17, 16, 0, tzinfo=NY), after_close=True)
+    asof = datetime(2026, 11, 18, 6, 52, tzinfo=ZoneInfo("Europe/Rome")).astimezone(NY).date()
+    assert asof == date(2026, 11, 18)
+    prices = make_prices(core_pullback_closes(), end=date(2026, 11, 17))
+    sig = run(prices, s, e=e, asof=asof)
+    assert sig.action == A.ATTENDI
+    assert sig.kind == K.event
+    assert sig.amount_eur is None
+    assert sig.reasons[0] == REACTION_REASON
+    assert sig.plan is not None and sig.plan.kind == K.event
+    assert sig.plan.stop is None and sig.plan.target is None and sig.plan.stop_eur is None
+    assert sig.plan.stop_order_on_tr is False
+    # con la barra del 18/11 (sera del 18/11) le regole normali riprendono
+    later = make_prices(core_pullback_closes(), end=date(2026, 11, 18))
+    sig = run(later, s, e=e, asof=date(2026, 11, 18))
+    assert sig.action == A.COMPRA
+    # una posizione aperta segue le sue regole (2/3), non la 4b
+    held = run(prices, s, e=e, asof=asof, holding=core_holding(100.0))
+    assert held.action == A.TIENI
+
+
+def test_pre_open_reaction_bar_same_day(s):
+    e = reported(datetime(2026, 11, 17, 8, 0, tzinfo=NY), after_close=False)
+    before = make_prices(core_pullback_closes(), end=date(2026, 11, 16))
+    assert run(before, s, e=e, asof=date(2026, 11, 17)).action == A.ATTENDI
+    same_day = make_prices(core_pullback_closes(), end=date(2026, 11, 17))
+    assert run(same_day, s, e=e, asof=date(2026, 11, 17)).action == A.COMPRA
+
+
+def test_after_close_on_friday_reacts_on_monday(s):
+    e = reported(datetime(2026, 11, 13, 16, 30, tzinfo=NY), after_close=True)
+    friday = make_prices(core_pullback_closes(), end=date(2026, 11, 13))
+    assert run(friday, s, e=e, asof=date(2026, 11, 16)).action == A.ATTENDI
+    monday = make_prices(core_pullback_closes(), end=date(2026, 11, 16))
+    assert run(monday, s, e=e, asof=date(2026, 11, 16)).action == A.COMPRA
+
+
 # --- Regola 5 ----------------------------------------------------------------
 
 
@@ -287,6 +356,23 @@ def test_rule5_core_entry(s):
     assert "sceso dell'8,0%" in joined
     assert "6–24 mesi" in joined
     assert "6 anni" in joined
+
+
+def test_ex_dividend_drop_not_a_pullback(s):
+    """R25: lo stacco del dividendo abbassa il close grezzo ma non è un ritracciamento."""
+    closes = rising() + [93.0, 93.2, 93.4]  # −7% il giorno dello stacco
+    prices = make_prices(closes)
+    # close aggiustato: le barre prima dello stacco riscalate del dividendo (−7%)
+    prices["adj_close"] = [c * 0.93 for c in rising()] + [93.0, 93.2, 93.4]
+    sig = run(prices, s)
+    assert sig.action == A.NESSUNA_AZIONE
+    assert "vicino al massimo" in " ".join(sig.reasons)
+    # sul close grezzo sarebbe sembrato un ritracciamento del 6,6% (ingresso base)
+    raw = make_prices(closes)
+    assert run(raw, s).action == A.COMPRA
+    # i livelli e i prezzi restano sul close grezzo
+    plan = build_plan(K.opportunity, 93.4, prices, ASOF, "USD", EURUSD, s)
+    assert plan.entry_ref == pytest.approx(93.4)
 
 
 def test_rule5_requires_quality(s):
