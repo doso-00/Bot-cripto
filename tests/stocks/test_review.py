@@ -21,7 +21,11 @@ from stocks.models import (
     TickerSnapshot,
 )
 from stocks.review import ClaudeReview, Proposal, TickerReview
-from stocks.signals import CONVERTED_ENTRY_REASON, open_position_stop_line, opportunity_scenarios
+from stocks.signals import (
+    CONVERTED_ENTRY_REASON,
+    open_position_stop_line,
+    opportunity_scenarios,
+)
 from stocks.state import State, load_state, save_state
 
 ROME = ZoneInfo("Europe/Rome")

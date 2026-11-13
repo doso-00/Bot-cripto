@@ -14,7 +14,13 @@ from stocks import apply_review, render
 from stocks.config import StocksSettings, WatchItem, Watchlist
 from stocks.refresh import run_refresh
 from stocks.review import ClaudeReview, Proposal, TickerReview
-from tests.stocks.fakes import FakeTicker, FakeYF, make_chain, make_earnings, make_history
+from tests.stocks.fakes import (
+    FakeTicker,
+    FakeYF,
+    make_chain,
+    make_earnings,
+    make_history,
+)
 from tests.stocks.signal_data import rising
 
 ROME = ZoneInfo("Europe/Rome")

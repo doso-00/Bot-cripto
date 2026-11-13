@@ -58,7 +58,6 @@ from stocks.signals import (
     ATR_WINDOW,
     HIGH_WINDOW,
     NEW_BUY_STOP_PREFIX,
-    OPEN_POSITION_STOP_PREFIX,  # noqa: F401 - riesportato per i test
     RSI_WINDOW,
     SMA_WINDOW,
     build_plan,

@@ -14,14 +14,19 @@ from stocks.refresh import (
     EMPTY_FUNDAMENTALS_ISSUE,
     EU_MOVES_ISSUE,
     NO_EXPECTED_MOVE_ISSUE,
-    OPEN_POSITION_STOP_PREFIX,
     PLAN_CREATED_REASON,
     main,
     run_refresh,
 )
-from stocks.signals import CONVERTED_ENTRY_REASON
+from stocks.signals import CONVERTED_ENTRY_REASON, OPEN_POSITION_STOP_PREFIX
 from stocks.state import State, Trade, load_state, save_state
-from tests.stocks.fakes import FakeTicker, FakeYF, make_chain, make_earnings, make_history
+from tests.stocks.fakes import (
+    FakeTicker,
+    FakeYF,
+    make_chain,
+    make_earnings,
+    make_history,
+)
 from tests.stocks.signal_data import core_pullback_closes, rising
 
 ROME = ZoneInfo("Europe/Rome")
