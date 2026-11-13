@@ -1,0 +1,246 @@
+<title>Dashboard azioni</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: una colonna pensata per il telefono; prima lo stato e le azioni (schede con
+   chip di stato), poi le sezioni di consultazione. Nessuno script. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --ink: #142130;
+  --muted: #586779;
+  --line: #d9e0e8;
+  --accent: #1c5db5;
+  --good-fg: #0d6a33;  --good-bg: #e0f2e6;
+  --bad-fg: #ad2427;   --bad-bg: #fbe5e5;
+  --warn-fg: #7f5100;  --warn-bg: #fcefd0;
+  --info-fg: #234e8c;  --info-bg: #e2eaf7;
+  --neutral-fg: #4a5767; --neutral-bg: #e8ecf1;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141b; --surface: #151d26; --ink: #e4eaf1; --muted: #98a6b5;
+    --line: #29343f; --accent: #74a7ef;
+    --good-fg: #7fd59f;  --good-bg: #133222;
+    --bad-fg: #ff9a96;   --bad-bg: #3b1819;
+    --warn-fg: #f1c46a;  --warn-bg: #392b0e;
+    --info-fg: #a1c3f6;  --info-bg: #172a45;
+    --neutral-fg: #b6c1cd; --neutral-bg: #222c37;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141b; --surface: #151d26; --ink: #e4eaf1; --muted: #98a6b5;
+  --line: #29343f; --accent: #74a7ef;
+  --good-fg: #7fd59f;  --good-bg: #133222;
+  --bad-fg: #ff9a96;   --bad-bg: #3b1819;
+  --warn-fg: #f1c46a;  --warn-bg: #392b0e;
+  --info-fg: #a1c3f6;  --info-bg: #172a45;
+  --neutral-fg: #b6c1cd; --neutral-bg: #222c37;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.wrap {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; line-height: 1.2; }
+h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.2rem; font-weight: 600; }
+h3 { font-size: 1.05rem; font-weight: 600; }
+p { margin: 0; }
+ul { margin: 0; padding-left: 1.15rem; }
+li + li { margin-top: 4px; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+
+/* Intestazione */
+.top { display: flex; flex-direction: column; gap: 10px; }
+.when { color: var(--muted); }
+.when strong { color: var(--ink); font-weight: 600; }
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.9rem; color: var(--muted); }
+.facts b { color: var(--ink); font-weight: 600; }
+.next { font-size: 0.95rem; }
+
+/* Avvisi in alto */
+.banners { display: flex; flex-direction: column; gap: 8px; }
+.banners:empty { display: none; }
+.banner { border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; }
+.banner strong { font-weight: 600; }
+.banner ul { font-size: 0.9rem; }
+.banner.bad { background: var(--bad-bg); color: var(--bad-fg); }
+.banner.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.banner.info { background: var(--info-bg); color: var(--info-fg); }
+
+/* Sezioni */
+section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.empty { color: var(--muted); }
+
+/* Chip di stato ed etichette misurato/stima */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+  background: var(--neutral-bg); color: var(--neutral-fg);
+}
+.chip.good { background: var(--good-bg); color: var(--good-fg); }
+.chip.bad { background: var(--bad-bg); color: var(--bad-fg); }
+.chip.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.chip.info { background: var(--info-bg); color: var(--info-fg); }
+.chip.soft { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.tag {
+  font-family: var(--font-data); font-size: 0.66rem; font-weight: 500;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 4px;
+  padding: 0 4px; vertical-align: 1px; white-space: nowrap;
+}
+.up { color: var(--good-fg); }
+.down { color: var(--bad-fg); }
+
+/* Scheda di un titolo */
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
+}
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.card-id { display: flex; flex-direction: column; min-width: 0; }
+.sym { font-family: var(--font-display); font-weight: 700; font-size: 1.15rem; letter-spacing: 0.01em; }
+.name { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.lead { font-weight: 500; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 8px 16px; margin: 0; }
+.kv div { min-width: 0; }
+.kv dt { font-size: 0.78rem; color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.buy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.buy .amount { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.blocked { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 8px 12px; }
+.hint { background: var(--info-bg); color: var(--info-fg); border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+.plan { display: flex; flex-direction: column; gap: 8px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.plan h3 { font-size: 0.95rem; }
+.moves { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 0.9rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.issues { font-size: 0.85rem; color: var(--muted); }
+
+details { min-width: 0; }
+summary { cursor: pointer; color: var(--accent); font-weight: 500; width: fit-content; }
+details[open] > summary { margin-bottom: 6px; }
+details > ul, details > .stack { font-size: 0.95rem; }
+
+/* Elenco compatto dei titoli senza azione */
+.quiet { display: flex; flex-direction: column; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.quiet > details { padding: 10px 16px; }
+.quiet > details + details { border-top: 1px solid var(--line); }
+.quiet summary { color: var(--ink); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: auto; list-style: none; }
+.quiet summary::-webkit-details-marker { display: none; }
+.quiet summary::after { content: "Perché? ›"; color: var(--accent); font-size: 0.85rem; margin-left: auto; }
+.quiet details[open] summary::after { content: "Chiudi"; }
+.quiet .body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+
+/* Portafoglio */
+.totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 12px 16px; margin: 0; }
+.totals div { min-width: 0; }
+.totals dt { font-size: 0.8rem; color: var(--muted); }
+.totals dd { margin: 0; font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.note { background: var(--neutral-bg); color: var(--ink); border-radius: 8px; padding: 10px 12px; font-size: 0.92rem; }
+.rev { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.rev li { display: flex; flex-direction: column; gap: 2px; margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.rev li:last-child { border-bottom: 0; padding-bottom: 0; }
+.rev .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+
+/* Notizie */
+.news { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.news li { margin: 0; overflow-wrap: anywhere; }
+
+/* Calendario */
+.cal { list-style: none; padding: 0; margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.cal li { display: grid; grid-template-columns: 11.5rem 1fr; gap: 4px 12px; padding: 10px 16px; margin: 0; }
+.cal li + li { border-top: 1px solid var(--line); }
+.cal .when { font-variant-numeric: tabular-nums; font-weight: 600; }
+.cal .what { min-width: 0; }
+
+/* Glossario */
+.gloss { margin: 0; display: grid; gap: 10px; }
+.gloss dt { font-weight: 600; }
+.gloss dd { margin: 0; color: var(--muted); }
+
+.disclaimer { border-top: 1px solid var(--line); padding-top: 16px; display: flex; flex-direction: column; gap: 6px; }
+.disclaimer strong { font-family: var(--font-display); font-weight: 600; font-size: 1rem; }
+
+@media (max-width: 420px) {
+  .cal li { grid-template-columns: 1fr; }
+  h1 { font-size: 1.45rem; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main class="wrap">
+  <header class="top">
+    <h1>Dashboard azioni</h1>
+    $header
+  </header>
+
+  <div class="banners">$banners</div>
+
+  <section id="cosa-fare" aria-labelledby="h-cosa-fare">
+    <div class="section-head"><h2 id="h-cosa-fare">Cosa fare</h2>$todo_count</div>
+    $todo
+  </section>
+
+  <section id="portafoglio" aria-labelledby="h-portafoglio">
+    <div class="section-head"><h2 id="h-portafoglio">Portafoglio</h2></div>
+    $portfolio
+  </section>
+
+  <section id="notizie" aria-labelledby="h-notizie">
+    <div class="section-head"><h2 id="h-notizie">Notizie spiegate</h2></div>
+    $news
+  </section>
+
+  <section id="calendario" aria-labelledby="h-calendario">
+    <div class="section-head"><h2 id="h-calendario">Calendario</h2><span class="small muted">trimestrali e stacco dividendi</span></div>
+    $calendar
+  </section>
+
+  <section id="modello" aria-labelledby="h-modello">
+    <div class="section-head"><h2 id="h-modello">Il modello</h2></div>
+    $model
+  </section>
+
+  <section id="glossario" aria-labelledby="h-glossario">
+    <div class="section-head"><h2 id="h-glossario">Glossario</h2></div>
+    $glossary
+  </section>
+
+  <section id="proposte-scartate" aria-labelledby="h-scartate">
+    <div class="section-head"><h2 id="h-scartate">Proposte scartate</h2></div>
+    $rejected
+  </section>
+
+  <footer class="disclaimer">
+    $footer
+  </footer>
+</main>
