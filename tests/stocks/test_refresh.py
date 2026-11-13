@@ -10,7 +10,11 @@ from stocks.config import StocksSettings, WatchItem, Watchlist
 from stocks.costs import net_pnl_eur
 from stocks.models import Action, PositionKind, Snapshot
 from stocks.refresh import (
+    BUDGET_ASSIGNED_REASON,
+    EMPTY_FUNDAMENTALS_ISSUE,
     EU_MOVES_ISSUE,
+    NO_EXPECTED_MOVE_ISSUE,
+    OPEN_POSITION_STOP_PREFIX,
     PLAN_CREATED_REASON,
     main,
     run_refresh,
@@ -197,9 +201,10 @@ def test_holding_outside_watchlist_is_followed(tmp_path, s):
     p = snap.portfolio
     assert p.invested_eur == pytest.approx(100.0)
     assert p.value_eur == pytest.approx(value)
-    assert p.cash_eur == pytest.approx(900.0)
+    # liquidità: budget − acquisto − commissione (R26)
+    assert p.cash_eur == pytest.approx(899.0)
     assert p.pnl_net_eur == pytest.approx(ko_snap.pnl_net_eur)
-    assert p.peak_value_eur == pytest.approx(900.0 + value)
+    assert p.peak_value_eur == pytest.approx(899.0 + value)
 
 
 def test_first_run_empty_state(tmp_path, s):
@@ -451,3 +456,180 @@ def test_indicators_use_adjusted_closes(tmp_path, s):
     assert t.drawdown_63d_pct == pytest.approx(0.0)
     assert t.high_63d == pytest.approx(93.4)
     assert t.signal.action == Action.NESSUNA_AZIONE
+
+
+def sell(ticker, qty, price, currency="EUR", kind=PositionKind.core, day="2026-11-05"):
+    return buy(ticker, qty, price, currency, kind, day).model_copy(update={"side": "sell"})
+
+
+def test_stale_bar_issue_eu_morning(tmp_path, s):
+    """R23: venerdì 13/11 alle 06:52 la seduta attesa è quella del 12/11 per Milano e New York."""
+    morning = datetime(2026, 11, 13, 6, 52, tzinfo=ROME)
+    enel = FakeTicker(
+        history=history(rising(), tz="Europe/Rome", end="2026-11-11"),
+        info={**GOOD_INFO, "currency": "EUR"},
+    )
+
+    snap = run(tmp_path, s, client(ENEL_MI=enel), wl=watchlist("NVDA", "ENEL.MI"), now=morning)
+
+    msg = "Ultimo prezzo disponibile del 11/11: la seduta del 12/11 non è ancora nei dati di Yahoo."
+    t = by_ticker(snap)
+    assert msg in t["ENEL.MI"].data_issues
+    assert f"ENEL.MI: {msg}" in snap.issues  # la pagina non mostra "dati OK"
+    # il segnale resta: i dati ci sono, solo in ritardo
+    assert t["ENEL.MI"].data_ok is True
+    assert t["ENEL.MI"].signal.action != Action.DATI_MANCANTI
+    assert not any("non è ancora nei dati" in i for i in t["NVDA"].data_issues)
+
+    # la sera del 13/11 dopo la chiusura di Milano (17:50) la seduta attesa è il 13/11
+    evening = datetime(2026, 11, 13, 18, 0, tzinfo=ROME)
+    enel13 = FakeTicker(
+        history=history(rising(), tz="Europe/Rome", end="2026-11-12"),
+        info={**GOOD_INFO, "currency": "EUR"},
+    )
+    snap = run(tmp_path, s, client(ENEL_MI=enel13), wl=watchlist("ENEL.MI"), now=evening)
+    assert any("la seduta del 13/11" in i for i in by_ticker(snap)["ENEL.MI"].data_issues)
+
+
+def test_empty_fundamentals_flagged(tmp_path, s):
+    """R15: fondamentali tutti vuoti senza eccezione: un nuovo tentativo, poi l'avviso."""
+    ko = FakeTicker(history=history(core_pullback_closes()), info={})
+
+    snap = run(tmp_path, s, client(KO=ko), wl=watchlist("KO"))
+
+    t = by_ticker(snap)["KO"]
+    assert ko.info_calls == 2  # un nuovo tentativo
+    assert EMPTY_FUNDAMENTALS_ISSUE in t.data_issues
+    assert f"KO: {EMPTY_FUNDAMENTALS_ISSUE}" in snap.issues
+    assert t.signal.action == Action.NESSUNA_AZIONE
+
+    # il secondo tentativo risponde: nessun avviso
+    ok = FakeTicker(history=history(core_pullback_closes()), info_sequence=[{}, GOOD_INFO])
+    snap = run(tmp_path, s, client(KO=ok), wl=watchlist("KO"))
+    t = by_ticker(snap)["KO"]
+    assert EMPTY_FUNDAMENTALS_ISSUE not in t.data_issues
+    assert t.signal.action == Action.COMPRA
+
+
+def test_realized_loss_reduces_equity(tmp_path, s):
+    """R26: una vendita in perdita resta nella liquidità e quindi nella storia del valore."""
+    trades = [buy("KO", qty=2, price=50.0), sell("KO", qty=2, price=40.0)]
+    save_state(State(trades=trades), tmp_path / "state.json")
+
+    snap = run(tmp_path, s, client())
+
+    # 1000 − (2×50 + 1) + (2×40 − 1)
+    assert snap.portfolio.cash_eur == pytest.approx(978.0)
+    assert snap.portfolio.invested_eur == pytest.approx(0.0)
+    assert snap.portfolio.value_eur == pytest.approx(0.0)
+    history_values = [v for _, v in load_state(tmp_path / "state.json").equity_history_eur]
+    assert history_values == [pytest.approx(978.0)]
+
+
+def test_usd_trades_converted_in_cash(tmp_path, s):
+    trades = [buy("KO", qty=1, price=117.0, currency="USD")]
+    ko = FakeTicker(history=history(rising()), info=GOOD_INFO)
+    save_state(State(trades=trades), tmp_path / "state.json")
+
+    snap = run(tmp_path, s, client(KO=ko))
+
+    assert snap.portfolio.cash_eur == pytest.approx(1000.0 - 117.0 / EURUSD - 1.0)
+
+
+def test_rebuy_after_full_sell(tmp_path, s):
+    ko = FakeTicker(history=history(rising()), info=GOOD_INFO)
+    trades = [
+        buy("KO", qty=2, price=50.0),
+        sell("KO", qty=2, price=60.0),
+        buy("KO", qty=1, price=70.0, day="2026-11-09"),
+    ]
+    save_state(State(trades=trades), tmp_path / "state.json")
+
+    snap = run(tmp_path, s, client(KO=ko))
+
+    h = by_ticker(snap)["KO"].holding
+    assert h.qty == pytest.approx(1.0)
+    assert h.avg_price == pytest.approx(70.0)  # il carico vecchio non si mescola
+    plan = load_state(tmp_path / "state.json").plans["KO"]
+    assert plan.entry_ref == pytest.approx(70.0 * EURUSD)
+    # 1000 − 101 + 119 − 71
+    assert snap.portfolio.cash_eur == pytest.approx(947.0)
+    assert snap.portfolio.invested_eur == pytest.approx(70.0)
+
+
+def test_buy_amounts_do_not_exceed_core_budget(tmp_path, s):
+    """R24: quattro ingressi base nello stesso run non superano l'80% del budget."""
+    names = ("AAA", "BBB", "CCC", "DDD")
+    tickers = {n: FakeTicker(history=history(core_pullback_closes()), info=GOOD_INFO) for n in names}
+
+    snap = run(tmp_path, s, client(**tickers), wl=watchlist(*names))
+
+    sigs = [by_ticker(snap)[n].signal for n in names]
+    assert [sg.action for sg in sigs] == [Action.COMPRA, Action.COMPRA, Action.COMPRA, Action.NESSUNA_AZIONE]
+    assert [sg.amount_eur for sg in sigs[:3]] == [pytest.approx(300.0), pytest.approx(300.0), pytest.approx(200.0)]
+    assert sum(sg.amount_eur for sg in sigs[:3]) <= s.budget_eur * s.core_share + 1e-9
+    assert sigs[3].blocked_by == BUDGET_ASSIGNED_REASON
+    assert sigs[3].plan is None and sigs[3].amount_eur is None
+
+
+def test_sizing_counts_holdings_and_keeps_page_order(tmp_path, s):
+    """R24: gli importi partono da ciò che è già investito; l'ordine in pagina resta quello della watchlist."""
+    save_state(State(trades=[buy("KO", qty=1, price=700.0)]), tmp_path / "state.json")
+    ko = FakeTicker(history=history(rising()), info=GOOD_INFO)
+    aaa = FakeTicker(history=history(core_pullback_closes()), info=GOOD_INFO)
+
+    snap = run(tmp_path, s, client(KO=ko, AAA=aaa), wl=watchlist("AAA", "KO"))
+
+    assert [t.ticker for t in snap.tickers] == ["AAA", "KO"]
+    # 800 − 700 investiti in base = 100 €: resta l'ordine minimo
+    assert by_ticker(snap)["AAA"].signal.amount_eur == pytest.approx(100.0)
+
+
+def test_zero_qty_trade_does_not_stop_others(tmp_path, s):
+    save_state(State(trades=[buy("KO", qty=0, price=50.0)]), tmp_path / "state.json")
+
+    snap = run(tmp_path, s, client(KO=FakeTicker(history=history(rising()), info=GOOD_INFO)))
+
+    t = by_ticker(snap)
+    assert t["KO"].signal.action == Action.DATI_MANCANTI
+    assert t["NVDA"].data_ok is True
+
+
+def test_plan_created_for_opportunity_has_stop_order_line(tmp_path, s):
+    """I4a: alla registrazione dell'acquisto il piano dice di inserire o correggere lo stop."""
+    xyz = FakeTicker(history=history(rising()), info=GOOD_INFO)
+    trade = buy("XYZ", qty=1, price=90.0, currency="USD", kind=PositionKind.opportunity, day="2026-10-20")
+    save_state(State(trades=[trade]), tmp_path / "state.json")
+
+    run(tmp_path, s, client(XYZ=xyz))
+
+    plan = load_state(tmp_path / "state.json").plans["XYZ"]
+    first = plan.scenarios[0]
+    assert first.startswith(OPEN_POSITION_STOP_PREFIX)
+    assert first.endswith("il livello è ricalcolato sul tuo prezzo di carico.")
+    assert not any(line.startswith("Subito dopo l'acquisto") for line in plan.scenarios)
+
+
+def test_plan_creation_error_is_confined(tmp_path, s, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("errore imprevisto")
+
+    monkeypatch.setattr("stocks.refresh.build_plan", boom)
+    save_state(State(trades=[buy("KO", qty=2, price=50.0)]), tmp_path / "state.json")
+    ko = FakeTicker(history=history(rising()), info=GOOD_INFO)
+
+    snap = run(tmp_path, s, client(KO=ko))
+
+    assert any("Piano di uscita non creato" in i for i in by_ticker(snap)["KO"].data_issues)
+    assert by_ticker(snap)["NVDA"].data_ok is True
+
+
+def test_options_unavailable_is_a_data_issue(tmp_path, s):
+    nvda = nvda_ticker()
+    nvda.options = ()
+
+    snap = run(tmp_path, s, client(NVDA=nvda))
+
+    t = by_ticker(snap)["NVDA"]
+    assert t.earnings.expected_move_pct is None
+    assert NO_EXPECTED_MOVE_ISSUE in t.data_issues

@@ -20,7 +20,7 @@ import sys
 import time
 import warnings
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,7 @@ import yfinance as yf
 from stocks.config import StocksSettings, Watchlist, load_settings, load_watchlist
 from stocks.costs import net_pnl_eur
 from stocks.data import (
+    CLOSE_MARGIN_MINUTES,
     dividend_years_without_cut,
     exchange_for_ticker,
     fetch_dividends,
@@ -52,15 +53,18 @@ from stocks.models import (
     Snapshot,
     TickerSnapshot,
 )
-from stocks.risk import portfolio_halted
+from stocks.risk import max_order_eur, portfolio_halted
 from stocks.signals import (
     ATR_WINDOW,
     HIGH_WINDOW,
+    NEW_BUY_STOP_PREFIX,
+    OPEN_POSITION_STOP_PREFIX,  # noqa: F401 - riesportato per i test
     RSI_WINDOW,
     SMA_WINDOW,
     build_plan,
     evaluate,
     holding_entry,
+    open_position_stop_line,
 )
 from stocks.state import (
     JournalEntry,
@@ -90,6 +94,12 @@ PLAN_REMOVED_REASON = "posizione chiusa: piano rimosso"
 NO_PRICES_REASON = (
     "Yahoo non ha restituito prezzi per questo titolo (ticker errato o non più quotato?)."
 )
+EMPTY_FUNDAMENTALS_ISSUE = (
+    "Dati di bilancio non disponibili: nessun nuovo acquisto di base per questo titolo."
+)
+NO_EXPECTED_MOVE_ISSUE = "Movimento atteso dalle opzioni non disponibile"
+BUDGET_ASSIGNED_REASON = "budget già assegnato ad altre proposte di questo aggiornamento"
+_BUY_ACTIONS = (Action.COMPRA, Action.ACCUMULA)
 
 
 class NoMarketDataError(RuntimeError):
@@ -109,6 +119,8 @@ class _TickerData:
     earnings: EarningsInfo = field(default_factory=EarningsInfo)
     close_eur: float | None = None
     issues: list[str] = field(default_factory=list)
+    # Note da mostrare anche in alto nella pagina (spengono "dati OK"), senza bloccare il segnale.
+    page_issues: list[str] = field(default_factory=list)
     error: str | None = None
 
 
@@ -131,6 +143,30 @@ def _fallback_currency(ticker: str) -> str | None:
 def _exchange_today(ticker: str, now: datetime) -> date:
     tz, _ = exchange_for_ticker(ticker)
     return now.astimezone(ZoneInfo(tz)).date()
+
+
+def _expected_session(ticker: str, now: datetime) -> date:
+    """Ultima seduta che dovrebbe essere nei dati (ruling R23).
+
+    L'ultimo giorno feriale <= oggi (fuso della borsa) la cui chiusura + 20 minuti è già
+    passata. Le festività non sono gestite: il giorno dopo una festa l'avviso può comparire.
+    """
+    tz, close_time = exchange_for_ticker(ticker)
+    local = now.astimezone(ZoneInfo(tz))
+    day = local.date()
+    closed = datetime.combine(day, close_time, tzinfo=local.tzinfo) + timedelta(
+        minutes=CLOSE_MARGIN_MINUTES
+    )
+    if day.weekday() >= 5 or local < closed:
+        day -= timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def _fundamentals_empty(f: Fundamentals) -> bool:
+    """True se Yahoo non ha dato nessun dato di `info` (la data di stacco viene da `calendar`)."""
+    return all(v is None for k, v in f.model_dump().items() if k != "ex_dividend_date")
 
 
 def _fetch_ticker(
@@ -158,13 +194,29 @@ def _fetch_ticker(
     d.prices = prices
     asof = prices.index[-1]
     close = float(prices["close"].iloc[-1])
+    expected = _expected_session(ticker, now)
+    if asof < expected:
+        msg = (
+            f"Ultimo prezzo disponibile del {asof:%d/%m}: la seduta del {expected:%d/%m} "
+            "non è ancora nei dati di Yahoo."
+        )
+        logger.warning("%s: %s", ticker, msg)
+        d.issues.append(msg)
+        d.page_issues.append(msg)
 
     try:
         f = fetch_fundamentals(ticker, client)
+        if _fundamentals_empty(f):
+            # Yahoo a volte risponde vuoto senza errori ("Invalid Crumb"): un nuovo tentativo.
+            logger.warning("%s: fondamentali vuoti, nuovo tentativo", ticker)
+            f = fetch_fundamentals(ticker, client)
     except Exception as exc:  # noqa: BLE001 - accessorio
         logger.warning("%s: fondamentali non disponibili (%s)", ticker, exc)
         f = Fundamentals()
         d.issues.append(f"Dati fondamentali non disponibili da Yahoo ({exc}).")
+    if _fundamentals_empty(f):
+        d.issues.append(EMPTY_FUNDAMENTALS_ISSUE)
+        d.page_issues.append(EMPTY_FUNDAMENTALS_ISSUE)
     if f.currency is None:
         fallback = _fallback_currency(ticker)
         if fallback is not None:
@@ -227,6 +279,8 @@ def _earnings(
         except Exception as exc:  # noqa: BLE001 - accessorio
             logger.warning("%s: movimento atteso non calcolabile (%s)", ticker, exc)
             move = None
+        if move is None:
+            issues.append(NO_EXPECTED_MOVE_ISSUE)
         e = e.model_copy(update={"expected_move_pct": move})
     return e
 
@@ -262,8 +316,9 @@ def _holdings(trades: list[Trade]) -> tuple[dict[str, Holding], dict[str, str]]:
     for ticker, group in by_ticker.items():
         try:
             holdings.update(holdings_from_trades(group))
-        except (ValueError, TypeError) as exc:
-            errors[ticker] = str(exc)
+        except (ValueError, TypeError, ArithmeticError) as exc:
+            # ArithmeticError: es. un acquisto con quantità 0 (divisione per zero nel medio)
+            errors[ticker] = str(exc) or type(exc).__name__
     return holdings, errors
 
 
@@ -307,9 +362,11 @@ def _sync_plans(
     """Piani nello stato: uno per posizione aperta (ruling R3).
 
     Una posizione senza piano lo riceve con `build_plan`: ingresso = prezzo medio nella
-    valuta del titolo (`holding_entry`), prezzi fino al primo acquisto. I piani dei
-    titoli non più posseduti si rimuovono, così un riacquisto futuro non eredita un
-    piano vecchio. I piani dei `COMPRA` non si salvano qui: solo all'acquisto registrato.
+    valuta del titolo (`holding_entry`), prezzi fino al primo acquisto. Per un piano con
+    stop la prima riga dice di inserire (o correggere) l'ordine stop-loss al livello
+    ricalcolato sul prezzo di carico. I piani dei titoli non più posseduti si rimuovono,
+    così un riacquisto futuro non eredita un piano vecchio. I piani dei `COMPRA` non si
+    salvano qui: solo all'acquisto registrato. Un errore resta confinato al suo titolo.
     """
     for ticker in list(state.plans):
         if ticker not in holdings and ticker not in trade_errors:
@@ -327,11 +384,20 @@ def _sync_plans(
         try:
             entry, notes = holding_entry(holding, d.currency, eurusd)
             plan = build_plan(holding.kind, entry, d.prices, start, d.currency, eurusd, s)
-        except ValueError as exc:
+        except Exception as exc:  # noqa: BLE001 - un titolo non deve fermare gli altri
+            logger.warning("%s: piano di uscita non creato (%s)", ticker, exc)
             d.issues.append(f"Piano di uscita non creato: {exc}")
             continue
-        if notes:
-            plan = plan.model_copy(update={"scenarios": [*plan.scenarios, *notes]})
+        scenarios = list(plan.scenarios)
+        if plan.stop_eur is not None:
+            # L'acquisto è già fatto: non "subito dopo l'acquisto", ma inserisci o correggi.
+            scenarios = [
+                open_position_stop_line(plan.stop_eur)
+                if line.startswith(NEW_BUY_STOP_PREFIX)
+                else line
+                for line in scenarios
+            ]
+        plan = plan.model_copy(update={"scenarios": [*scenarios, *notes]})
         state.plans[ticker] = plan
         state.revisions.append(
             _plan_revision(now, ticker, None, plan.model_dump_json(), PLAN_CREATED_REASON)
@@ -359,7 +425,11 @@ def _portfolio(
     """Valori in euro delle posizioni, liquidità, storia del valore e blocco acquisti.
 
     Investito: qty × prezzo medio (convertito al cambio di oggi se la posizione è in
-    USD). Valore: qty × chiusura in euro. Utile netto per posizione con commissioni e
+    USD). Valore: qty × chiusura in euro. Liquidità (ruling R26): budget − acquisti
+    (prezzo × qty + commissione) + vendite (prezzo × qty − commissione), in euro (le
+    operazioni in USD al cambio di oggi); valore totale = liquidità + valore delle
+    posizioni, così le perdite realizzate restano nella storia e nel blocco del −15%.
+    Utile netto per posizione con commissioni e
     tasse; quello del portafoglio è la somma (prudente: non compensa perdite e guadagni).
     La storia riceve un punto al giorno (data di Roma) solo se tutte le posizioni hanno un
     valore (prezzo e operazioni valide): un valore parziale simulerebbe un crollo e
@@ -387,10 +457,18 @@ def _portfolio(
         value_total += value
         pnl_by_ticker[ticker] = net_pnl_eur(invested, value, s)
 
-    cash = s.budget_eur - invested_total
+    cash = s.budget_eur
+    for t in state.trades:
+        try:
+            gross = to_eur(t.price * t.qty, t.currency, eurusd)
+        except ValueError:
+            missing.append(t.ticker)
+            continue
+        cash += gross - t.fee_eur if t.side == "sell" else -(gross + t.fee_eur)
+    missing = sorted(set(missing))
     if missing:
         issues.append(
-            f"Valore del portafoglio incompleto (mancano i dati di {', '.join(sorted(missing))}): "
+            f"Valore del portafoglio incompleto (mancano i dati di {', '.join(missing)}): "
             "storia del valore non aggiornata in questo run."
         )
     else:
@@ -467,6 +545,37 @@ def _signal(
         return _missing(f"Errore nel calcolo del segnale: {exc}")
 
 
+def _budget_assigned(
+    sig: Signal, base: SizingContext, running: SizingContext, s: StocksSettings
+) -> Signal:
+    """Un acquisto bloccato solo dagli importi già proposti in questo run lo dice (R24).
+
+    Se con il portafoglio reale l'acquisto avrebbe avuto un importo, il blocco viene dalle
+    proposte precedenti di questo aggiornamento, non da un limite del portafoglio.
+    """
+    if (
+        sig.action != Action.NESSUNA_AZIONE
+        or sig.blocked_by is None
+        or sig.kind is None
+        or running.halted
+        or running == base
+    ):
+        return sig
+    amount, _ = max_order_eur(sig.kind, base.holdings_eur, base.open_opps, s)
+    if amount <= 0:
+        return sig
+    return sig.model_copy(update={"blocked_by": BUDGET_ASSIGNED_REASON})
+
+
+def _assign(running: SizingContext, sig: Signal) -> None:
+    """Riserva l'importo di un acquisto proposto per i titoli valutati dopo."""
+    if sig.action not in _BUY_ACTIONS or not sig.amount_eur or sig.kind is None:
+        return
+    running.holdings_eur[sig.kind] = running.holdings_eur.get(sig.kind, 0.0) + sig.amount_eur
+    if sig.kind != PositionKind.core:
+        running.open_opps += 1
+
+
 def _followed(
     watchlist: Watchlist, holdings: dict[str, Holding], trade_errors: dict[str, str]
 ) -> tuple[list[str], dict[str, str]]:
@@ -532,17 +641,30 @@ def run_refresh(
         if entry.source == "engine":
             last_action[entry.ticker] = entry.action
 
+    # Importi in sequenza (R24): prima i titoli posseduti, poi gli altri, nell'ordine della
+    # watchlist; ogni acquisto proposto riduce il budget residuo per i titoli successivi.
+    running = portfolio.ctx.model_copy(deep=True)
+    signals: dict[str, Signal] = {}
+    for ticker in sorted(followed, key=lambda tk: tk not in holdings):
+        sig = _signal(data[ticker], holdings.get(ticker), trade_errors.get(ticker), state,
+                      running, eurusd, s)
+        sig = _budget_assigned(sig, portfolio.ctx, running, s)
+        _assign(running, sig)
+        signals[ticker] = sig
+
     tickers: list[TickerSnapshot] = []
     for ticker in followed:
         d = data[ticker]
         holding = holdings.get(ticker)
-        signal = _signal(d, holding, trade_errors.get(ticker), state, portfolio.ctx, eurusd, s)
+        signal = signals[ticker]
         data_ok = d.error is None and signal.action != Action.DATI_MANCANTI
         if not data_ok:
             for reason in signal.reasons:
                 if reason not in d.issues:
                     d.issues.append(reason)
             issues.append(f"{ticker}: {' '.join(signal.reasons)}")
+        else:
+            issues.extend(f"{ticker}: {msg}" for msg in d.page_issues)
         snap = TickerSnapshot(
             ticker=ticker,
             name=d.fundamentals.name or ticker,

@@ -175,7 +175,9 @@ class PortfolioSummary(BaseModel):
     `invested_eur` = costo delle posizioni aperte; `value_eur` = valore di mercato delle
     posizioni con un prezzo disponibile; `pnl_net_eur` = somma degli utili netti delle
     singole posizioni (commissioni di acquisto e vendita e tasse stimate incluse);
-    `cash_eur` = budget − investito; `peak_value_eur` = massimo storico del valore totale
+    `cash_eur` = budget − acquisti (con commissioni) + vendite (al netto delle commissioni),
+    in euro: le operazioni in USD al cambio di oggi, quindi è una stima (ruling R26);
+    `peak_value_eur` = massimo storico del valore totale
     (liquidità + posizioni); `halted` = nuovi acquisti bloccati dal calo dal massimo.
     """
 

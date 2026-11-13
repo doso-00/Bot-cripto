@@ -7,6 +7,8 @@ Task 5: `get_earnings_dates(limit)` (DataFrame indicizzato da "Earnings Date" tz
 colonne "EPS Estimate", "Reported EPS", "Surprise(%)"), `options` (tuple di scadenze
 'YYYY-MM-DD') e `option_chain(expiry)` (oggetto con `.calls` e `.puts`).
 Task 8: `info_error` fa sollevare l'accesso a `info` (Yahoo che non risponde sui fondamentali).
+Ondata finale: `info_sequence` restituisce un `info` diverso a ogni accesso (l'ultimo si
+ripete), `info_calls` conta gli accessi.
 """
 
 from types import SimpleNamespace
@@ -94,10 +96,13 @@ class FakeTicker:
         chains: dict | None = None,
         earnings_error: Exception | None = None,
         info_error: Exception | None = None,
+        info_sequence: list[dict] | None = None,
     ):
         self._history = history if history is not None else pd.DataFrame()
         self._info = info if info is not None else {}
         self._info_error = info_error
+        self._info_sequence = list(info_sequence) if info_sequence else None
+        self.info_calls = 0
         self.calendar = calendar if calendar is not None else {}
         self.dividends = dividends if dividends is not None else pd.Series(dtype=float)
         self.fail_times = fail_times
@@ -110,8 +115,11 @@ class FakeTicker:
 
     @property
     def info(self) -> dict:
+        self.info_calls += 1
         if self._info_error is not None:
             raise self._info_error
+        if self._info_sequence:
+            return self._info_sequence.pop(0) if len(self._info_sequence) > 1 else self._info_sequence[0]
         return self._info
 
     def history(self, **kwargs) -> pd.DataFrame:

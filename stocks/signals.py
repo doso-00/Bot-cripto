@@ -180,6 +180,22 @@ def quality_check(
 # --- Piani -------------------------------------------------------------------
 
 
+# Inizi e fine delle righe standard degli scenari con stop: `is_standard_scenario` le
+# riconosce per rigenerarle e conservare le note aggiunte (es. prezzo di carico convertito).
+NEW_BUY_STOP_PREFIX = "Subito dopo l'acquisto inserisci su Trade Republic un ordine stop-loss"
+OPEN_POSITION_STOP_PREFIX = "Inserisci (o correggi) l'ordine stop-loss su Trade Republic"
+MOVE_STOP_PREFIX = "Sposta il tuo ordine stop-loss su Trade Republic"
+KEEP_STOP_PREFIX = "Lascia il tuo ordine stop-loss su Trade Republic"
+STOP_LINE_PREFIXES = (
+    NEW_BUY_STOP_PREFIX,
+    OPEN_POSITION_STOP_PREFIX,
+    MOVE_STOP_PREFIX,
+    KEEP_STOP_PREFIX,
+)
+_TARGET_PREFIX = "Se raggiunge l'obiettivo di "
+_DEADLINE_SUFFIX = "non ha toccato né lo stop né l'obiettivo: vendi alla scadenza."
+
+
 def opportunity_scenarios(
     stop: float,
     stop_eur: float,
@@ -187,22 +203,43 @@ def opportunity_scenarios(
     target_eur: float,
     deadline: date,
     currency: str,
+    previous_stop_eur: float | None = None,
 ) -> list[str]:
     """Testi dei tre scenari di un piano con stop (occasione/evento).
 
     Esposta per rigenerare i testi quando la revisione di Claude modifica stop o scadenza.
+    Con `previous_stop_eur` (posizione già aperta, con l'ordine stop-loss già inserito) la
+    prima riga dice di spostare l'ordine da quel livello al nuovo, o di lasciarlo dov'è se
+    il livello in euro non cambia; senza, è il testo per un nuovo acquisto.
     """
+    level = f"{_num(stop_eur)} € ({_money(stop, currency)})"
+    if previous_stop_eur is None:
+        first = f"{NEW_BUY_STOP_PREFIX} a {level}."
+    elif _round_eur(previous_stop_eur, ROUND_FLOOR) == _round_eur(stop_eur, ROUND_FLOOR):
+        first = f"{KEEP_STOP_PREFIX} a {level}."
+    else:
+        first = f"{MOVE_STOP_PREFIX} da {_num(previous_stop_eur)} € a {level}."
     return [
-        (
-            f"Subito dopo l'acquisto inserisci su Trade Republic un ordine stop-loss a {_num(stop_eur)} € "
-            f"({_money(stop, currency)})."
-        ),
-        f"Se raggiunge l'obiettivo di {_money(target, currency)} (circa {_num(target_eur)} €): vendi.",
-        (
-            f"Se {_art('il', f'{deadline:%d/%m/%Y}')} non ha toccato né lo stop né l'obiettivo: "
-            "vendi alla scadenza."
-        ),
+        first,
+        f"{_TARGET_PREFIX}{_money(target, currency)} (circa {_num(target_eur)} €): vendi.",
+        f"Se {_art('il', f'{deadline:%d/%m/%Y}')} {_DEADLINE_SUFFIX}",
     ]
+
+
+def open_position_stop_line(stop_eur: float) -> str:
+    """Riga del piano creato alla registrazione di un acquisto (stop sul prezzo di carico)."""
+    return (
+        f"{OPEN_POSITION_STOP_PREFIX} a {_num(stop_eur)} €: il livello è ricalcolato "
+        "sul tuo prezzo di carico."
+    )
+
+
+def is_standard_scenario(line: str) -> bool:
+    """True per le righe generate da `opportunity_scenarios`/`open_position_stop_line`."""
+    return (
+        line.startswith((*STOP_LINE_PREFIXES, _TARGET_PREFIX))
+        or (line.startswith("Se ") and line.endswith(_DEADLINE_SUFFIX))
+    )
 
 
 def build_plan(
