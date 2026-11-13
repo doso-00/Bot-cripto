@@ -47,6 +47,7 @@ Kill switch: creare un file `STOP` nella root del progetto ferma il bot al ciclo
 | `uv run python -m stocks.refresh` | Azioni: dati e segnali dei titoli seguiti → `out/snapshot.json` | Azioni, Fase A |
 | `uv run python -m stocks.apply_review` | Azioni: applica la revisione notizie di Claude → `out/final.json` | Azioni, Fase A |
 | `uv run python -m stocks.render` | Azioni: pagina della dashboard → `out/dashboard.html` | Azioni, Fase A |
+| `uv run python -m stocks.trade add …` / `list` | Azioni: registra (o elenca) le operazioni fatte su Trade Republic in `out/state.json` | Azioni, Fase A |
 
 ## Dati (Fase 1)
 
@@ -96,7 +97,13 @@ In Fase A le regole di ingresso **non sono validate** su dati storici e la pagin
 uv run python -m stocks.refresh --slot manuale   # dati Yahoo, indicatori, segnali → out/snapshot.json
 uv run python -m stocks.apply_review             # applica la revisione di Claude (se c'è) → out/final.json
 uv run python -m stocks.render                   # pagina → out/dashboard.html
+uv run python -m stocks.trade add --ticker NVDA --side buy --qty 1.3 --price 140.50 \
+  --currency EUR --kind opportunity            # registra un'operazione fatta a mano
+uv run python -m stocks.trade list               # operazioni e posizioni nello stato locale
 ```
+
+- Registrare un acquisto o una vendita (da una chat con Claude, sullo stato della pagina pubblicata):
+  [`docs/REGISTRARE_OPERAZIONI.md`](docs/REGISTRARE_OPERAZIONI.md).
 
 - Titoli seguiti in `config/stocks/watchlist.yaml` (quelli proposti da Claude sono esempi da confermare), limiti e
   soglie in `config/stocks/settings.yaml`.

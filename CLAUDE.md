@@ -66,4 +66,5 @@ principiante, cosa comprare, quanto tenere e quando vendere su Trade Republic, c
 | `uv run python -m stocks.refresh --slot sera` | Azioni: scarica dati e segnali dei titoli seguiti, scrive `out/snapshot.json` e aggiorna `out/state.json` (exit 2 se nessun titolo ha dati o manca il cambio EUR/USD) |
 | `uv run python -m stocks.apply_review` | Azioni: valida la revisione di Claude (`out/claude_review.json`), applica solo le proposte ammesse e scrive `out/final.json` |
 | `uv run python -m stocks.render` | Azioni: scrive la pagina `out/dashboard.html` da `out/final.json` e dallo stato |
+| `uv run python -m stocks.trade add --ticker NVDA --side buy --qty 1.3 --price 140.50 --currency EUR --kind opportunity` | Azioni: registra in `out/state.json` un'operazione fatta a mano su Trade Republic, con validazione (`list` per elencarle); procedura in `docs/REGISTRARE_OPERAZIONI.md` |
 | `uv run pytest` | Esegue la suite di test |
