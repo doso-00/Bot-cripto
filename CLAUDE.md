@@ -31,6 +31,27 @@ Questo file contiene le regole permanenti del progetto. Il documento di specific
 - Distingui sempre nei report ciò che è **misurato** da ciò che è **ipotesi**.
 - Quando un risultato sembra troppo bello (es. Sharpe > 3, drawdown quasi zero), presumi un bug finché non è dimostrato il contrario.
 
+## Dashboard azioni (`stocks/`)
+
+Secondo progetto nello stesso repository: una dashboard che due volte al giorno dice a Riccardo, investitore
+principiante, cosa comprare, quanto tenere e quando vendere su Trade Republic, con spiegazioni semplici. Specifica:
+`docs/superpowers/specs/2026-11-12-stock-dashboard-design.md`. Le regole sopra sul bot cripto restano valide; per
+`stocks/` cambiano o si aggiungono queste:
+
+- **Nessun collegamento al broker.** Trade Republic non ha API: nessun codice che invii ordini o si colleghi al conto,
+  nessuna credenziale broker richiesta o salvata. Riccardo compra e vende a mano e registra le operazioni nello stato.
+- **Claude spiega, il codice decide.** Azioni, importi, stop, obiettivi e date limite li calcola il codice
+  deterministico (`stocks/signals.py`, `stocks/risk.py`). Claude legge le notizie, le spiega e può solo *proporre*
+  modifiche che restringono un piano; `stocks/apply_review.py` le ammette o le scarta (e le registra).
+- **I numeri vengono solo dal codice.** Ogni numero in pagina viene dallo snapshot calcolato sui dati; il testo di
+  Claude (`out/claude_review.json`) non contiene prezzi, date o dati di bilancio presi dagli articoli.
+- **Regole di ingresso non validate (Fase A).** Ogni `COMPRA`/`ACCUMULA` porta `validated = False` e in pagina
+  l'etichetta "regola non ancora validata", finché una fase successiva non le misura su dati storici.
+- Pacchetti separati: nessun import tra `bot/` e `stocks/`. Test in `tests/stocks/`, senza rete.
+- Lo stato (operazioni, piani, registro) vive nel database della pagina pubblicata (Artifact), documento
+  `state/current`; in locale è `out/state.json` (non versionato).
+- La sessione programmata segue `stocks/PROMPT_REFRESH.md` e non fa commit né modifiche a codice o configurazione.
+
 ## Comandi principali (da mantenere aggiornati)
 
 | Comando | Cosa fa |
@@ -42,4 +63,7 @@ Questo file contiene le regole permanenti del progetto. Il documento di specific
 | `uv run python -m bot.evaluate --confirm-test-period` | Fase 3: test finale, una sola volta, sulle strategie promosse dalla validazione |
 | `uv run python -m bot.run --mode paper` | Avvia il paper trading sul Testnet |
 | `uv run python -m bot.report` | Report delle performance del paper trading (Fase 4); i report di backtest li genera `bot.backtest` |
+| `uv run python -m stocks.refresh --slot sera` | Azioni: scarica dati e segnali dei titoli seguiti, scrive `out/snapshot.json` e aggiorna `out/state.json` (exit 2 se nessun titolo ha dati o manca il cambio EUR/USD) |
+| `uv run python -m stocks.apply_review` | Azioni: valida la revisione di Claude (`out/claude_review.json`), applica solo le proposte ammesse e scrive `out/final.json` |
+| `uv run python -m stocks.render` | Azioni: scrive la pagina `out/dashboard.html` da `out/final.json` e dallo stato |
 | `uv run pytest` | Esegue la suite di test |
