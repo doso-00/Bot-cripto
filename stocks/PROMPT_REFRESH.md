@@ -283,15 +283,20 @@ meritano un avviso:
 cd /home/user/Bot-cripto && uv run python - <<'EOF'
 import json
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+def ts(text):
+    # un orario senza fuso (righe vecchie o scritte a mano) vale come ora italiana
+    t = datetime.fromisoformat(text)
+    return t if t.tzinfo is not None else t.replace(tzinfo=ZoneInfo("Europe/Rome"))
 snap = json.load(open("out/snapshot.json", encoding="utf-8"))
 state = json.load(open("out/state.json", encoding="utf-8"))
 view = json.load(open("out/final.json", encoding="utf-8"))
-run_ts = datetime.fromisoformat(snap["generated_at"])
+run_ts = ts(snap["generated_at"])
 journal = state.get("journal", [])
 quiet = {"TIENI", "ATTENDI", "NESSUNA_AZIONE"}
 # (a) azioni nuove: righe del motore scritte da questo refresh (stesso istante dello snapshot)
 for j in journal:
-    if j["source"] == "engine" and datetime.fromisoformat(j["ts"]) == run_ts and j["action"] not in quiet:
+    if j["source"] == "engine" and ts(j["ts"]) == run_ts and j["action"] not in quiet:
         print(j["ticker"], j["action"], "azione nuova")
 # (b) risultati trimestrali nella revisione applicata (reviews è vuoto se la revisione è stata scartata),
 #     solo se non già annunciati negli ultimi 4 giorni (riga "claude" uguale, prima di questo run)
@@ -301,7 +306,7 @@ for ticker, r in view.get("reviews", {}).items():
         continue
     seen = any(
         j["source"] == "claude" and j["ticker"] == ticker and j.get("event_class") == ev
-        and run_ts - timedelta(days=4) <= datetime.fromisoformat(j["ts"]) < run_ts
+        and run_ts - timedelta(days=4) <= ts(j["ts"]) < run_ts
         for j in journal
     )
     if not seen:
